@@ -46,9 +46,37 @@ pub fn execute(id: String, include_archived: bool, formatter: &dyn OutputFormatt
     let full_id = resolve_id(&id, &storage, include_archived)?;
 
     // Load the Pearl
-    let pearl = storage.load_by_id(&full_id)?;
+    let pearl = match storage.load_by_id(&full_id) {
+        Ok(pearl) => pearl,
+        Err(err) => {
+            if include_archived {
+                if let Some(parent) = storage.path().parent() {
+                    let archive_path = parent.join("archive.jsonl");
+                    if archive_path.exists() {
+                        let mut archive_storage = Storage::new(archive_path)?;
+                        if let Ok(pearl) = archive_storage.load_by_id(&full_id) {
+                            return display_pearl(pearl, formatter);
+                        }
+                    }
+                }
+            }
+            return Err(err.into());
+        }
+    };
 
-    // Display the Pearl
+    display_pearl(pearl, formatter)
+}
+
+fn format_dep_type(dep_type: pearls_core::DepType) -> &'static str {
+    match dep_type {
+        pearls_core::DepType::Blocks => "blocks",
+        pearls_core::DepType::ParentChild => "parent_child",
+        pearls_core::DepType::Related => "related",
+        pearls_core::DepType::DiscoveredFrom => "discovered_from",
+    }
+}
+
+fn display_pearl(pearl: pearls_core::Pearl, formatter: &dyn OutputFormatter) -> Result<()> {
     let mut output = formatter.format_pearl(&pearl);
     if !pearl.deps.is_empty() {
         output.push_str("\nDependencies:\n");
@@ -63,15 +91,6 @@ pub fn execute(id: String, include_archived: bool, formatter: &dyn OutputFormatt
     println!("{}", output);
 
     Ok(())
-}
-
-fn format_dep_type(dep_type: pearls_core::DepType) -> &'static str {
-    match dep_type {
-        pearls_core::DepType::Blocks => "blocks",
-        pearls_core::DepType::ParentChild => "parent_child",
-        pearls_core::DepType::Related => "related",
-        pearls_core::DepType::DiscoveredFrom => "discovered_from",
-    }
 }
 
 /// Resolves a partial or full Pearl ID.

@@ -10,6 +10,8 @@ use pearls_core::{Config, Pearl, Status, Storage};
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::progress::ProgressReporter;
+
 /// Compacts closed Pearls older than the configured threshold.
 ///
 /// # Arguments
@@ -84,9 +86,13 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
         .map(|pearl| (pearl.id.clone(), pearl))
         .collect();
 
-    for pearl in archive_candidates {
+    let total = archive_candidates.len();
+    let progress = ProgressReporter::new("Archiving", Some(total), 1000);
+    for (idx, pearl) in archive_candidates.into_iter().enumerate() {
         archive_map.entry(pearl.id.clone()).or_insert(pearl);
+        progress.report(idx + 1);
     }
+    progress.finish(total);
 
     let mut merged_archive: Vec<Pearl> = archive_map.into_values().collect();
     merged_archive.sort_by(|a, b| a.id.cmp(&b.id));

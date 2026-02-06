@@ -420,7 +420,7 @@ impl Storage {
         }
 
         let file = File::open(&self.path)?;
-        let reader = BufReader::new(file);
+        let reader = BufReader::with_capacity(64 * 1024, file);
         let mut pearls = Vec::new();
 
         // Use streaming deserializer for memory efficiency
@@ -486,7 +486,7 @@ impl Storage {
         }
 
         let file = File::open(&self.path)?;
-        let reader = BufReader::new(file);
+        let reader = BufReader::with_capacity(64 * 1024, file);
         let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Pearl>();
 
         for result in stream {

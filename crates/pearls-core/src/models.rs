@@ -97,7 +97,7 @@ impl Pearl {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("System time before UNIX epoch")
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_secs() as i64;
 
         let id = crate::identity::generate_id(&title, &author, now, 0);

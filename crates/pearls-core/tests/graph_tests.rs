@@ -185,6 +185,34 @@ fn test_non_blocking_dependencies_dont_block() {
 }
 
 #[test]
+fn test_dependencies_by_type_filters_correctly() {
+    let mut pearls = vec![
+        create_pearl("prl-a1b2c3", Status::Open),
+        create_pearl("prl-d4e5f6", Status::Open),
+        create_pearl("prl-g7h8i9", Status::Open),
+    ];
+
+    pearls[0].deps.push(Dependency {
+        target_id: "prl-d4e5f6".to_string(),
+        dep_type: DepType::Blocks,
+    });
+    pearls[0].deps.push(Dependency {
+        target_id: "prl-g7h8i9".to_string(),
+        dep_type: DepType::Related,
+    });
+
+    let graph = IssueGraph::from_pearls(pearls).expect("Valid graph");
+
+    let blocking = graph.dependencies_by_type("prl-a1b2c3", DepType::Blocks);
+    assert_eq!(blocking.len(), 1, "Should return only blocking deps");
+    assert_eq!(blocking[0].id, "prl-d4e5f6");
+
+    let related = graph.dependencies_by_type("prl-a1b2c3", DepType::Related);
+    assert_eq!(related.len(), 1, "Should return only related deps");
+    assert_eq!(related[0].id, "prl-g7h8i9");
+}
+
+#[test]
 fn test_closed_blocker_doesnt_block() {
     let mut pearls = vec![
         create_pearl("prl-a1b2c3", Status::Closed),

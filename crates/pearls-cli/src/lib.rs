@@ -6,6 +6,7 @@
 
 pub mod commands;
 pub mod output;
+pub mod progress;
 pub mod terminal;
 
 pub use output::{create_formatter, OutputFormatter};

@@ -219,6 +219,30 @@ proptest! {
         prop_assert_eq!(&deserialized.labels[0], &label);
     }
 
+    /// **Property 36: Timestamp Precision Preservation**
+    ///
+    /// **Validates: Requirements 26.5**
+    #[test]
+    fn test_timestamp_precision_preserved(timestamp in 1i64..1_000_000_000_000i64) {
+        let pearl = Pearl {
+            id: "prl-abc123".to_string(),
+            title: "Title".to_string(),
+            description: String::new(),
+            status: Status::Open,
+            priority: 2,
+            created_at: timestamp,
+            updated_at: timestamp,
+            author: "author".to_string(),
+            labels: Vec::new(),
+            deps: Vec::new(),
+            metadata: Default::default(),
+        };
+        let json = serde_json::to_string(&pearl).expect("Serialization failed");
+        let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
+        prop_assert_eq!(deserialized.created_at, timestamp);
+        prop_assert_eq!(deserialized.updated_at, timestamp);
+    }
+
     /// **Property 38: Markdown Preservation**
     ///
     /// **Validates: Requirements 24.2, 24.3**

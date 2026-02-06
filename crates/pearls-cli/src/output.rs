@@ -74,6 +74,7 @@ impl OutputFormatter for JsonFormatter {
 /// Formats Pearls as human-readable tables with colors and alignment.
 pub struct TableFormatter {
     use_color: bool,
+    absolute_time: bool,
 }
 
 impl TableFormatter {
@@ -84,8 +85,11 @@ impl TableFormatter {
     ///
     /// # Returns
     /// A new TableFormatter instance
-    pub fn new(use_color: bool) -> Self {
-        Self { use_color }
+    pub fn new(use_color: bool, absolute_time: bool) -> Self {
+        Self {
+            use_color,
+            absolute_time,
+        }
     }
 }
 
@@ -100,11 +104,11 @@ impl OutputFormatter for TableFormatter {
         output.push_str(&format!("Author:      {}\n", pearl.author));
         output.push_str(&format!(
             "Created:     {}\n",
-            format_timestamp(pearl.created_at)
+            format_timestamp(pearl.created_at, self.absolute_time)
         ));
         output.push_str(&format!(
             "Updated:     {}\n",
-            format_timestamp(pearl.updated_at)
+            format_timestamp(pearl.updated_at, self.absolute_time)
         ));
 
         if !pearl.description.is_empty() {
@@ -128,7 +132,7 @@ impl OutputFormatter for TableFormatter {
         }
 
         let mut builder = Builder::default();
-        builder.push_record(vec!["ID", "Status", "Priority", "Title", "Author"]);
+        builder.push_record(vec!["ID", "Status", "Priority", "Title", "Author", "Deps"]);
 
         for pearl in pearls {
             let is_archived = pearl
@@ -147,6 +151,7 @@ impl OutputFormatter for TableFormatter {
                 &format!("P{}", pearl.priority),
                 &pearl.title,
                 &pearl.author,
+                &format_dep_summary(pearl),
             ]);
         }
 
@@ -174,7 +179,22 @@ impl OutputFormatter for TableFormatter {
 /// Plain text output formatter.
 ///
 /// Formats Pearls as simple plain text without colors or tables.
-pub struct PlainFormatter;
+pub struct PlainFormatter {
+    absolute_time: bool,
+}
+
+impl PlainFormatter {
+    /// Creates a new plain formatter.
+    ///
+    /// # Arguments
+    /// * `absolute_time` - Whether to display absolute timestamps
+    ///
+    /// # Returns
+    /// A new PlainFormatter instance
+    pub fn new(absolute_time: bool) -> Self {
+        Self { absolute_time }
+    }
+}
 
 impl OutputFormatter for PlainFormatter {
     fn format_pearl(&self, pearl: &Pearl) -> String {
@@ -187,7 +207,7 @@ impl OutputFormatter for PlainFormatter {
         output.push_str(&format!("{}\n", pearl.author));
         output.push_str(&format!(
             "Updated: {}\n",
-            format_timestamp(pearl.updated_at)
+            format_timestamp(pearl.updated_at, self.absolute_time)
         ));
 
         if !pearl.description.is_empty() {
@@ -215,12 +235,14 @@ impl OutputFormatter for PlainFormatter {
                 pearl.id.clone()
             };
             output.push_str(&format!(
-                "{} {:?} P{} {} ({})\n",
+                "{} {:?} P{} {} by {} [{}] ({})\n",
                 id_display,
                 pearl.status,
                 pearl.priority,
                 pearl.title,
-                format_timestamp(pearl.updated_at)
+                pearl.author,
+                format_dep_summary(pearl),
+                format_timestamp(pearl.updated_at, self.absolute_time)
             ));
         }
         output
@@ -231,11 +253,14 @@ impl OutputFormatter for PlainFormatter {
     }
 }
 
-fn format_timestamp(timestamp: i64) -> String {
+fn format_timestamp(timestamp: i64, absolute_time: bool) -> String {
     let dt = match DateTime::<Utc>::from_timestamp(timestamp, 0) {
         Some(value) => value,
         None => return timestamp.to_string(),
     };
+    if absolute_time {
+        return dt.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    }
     let now = Utc::now();
     let delta = now.signed_duration_since(dt);
     if delta < Duration::seconds(0) {
@@ -259,6 +284,42 @@ fn format_timestamp(timestamp: i64) -> String {
     dt.format("%Y-%m-%d").to_string()
 }
 
+fn format_dep_summary(pearl: &Pearl) -> String {
+    if pearl.deps.is_empty() {
+        return "-".to_string();
+    }
+
+    let mut blocks = 0usize;
+    let mut parent_child = 0usize;
+    let mut related = 0usize;
+    let mut discovered_from = 0usize;
+
+    for dep in &pearl.deps {
+        match dep.dep_type {
+            pearls_core::DepType::Blocks => blocks += 1,
+            pearls_core::DepType::ParentChild => parent_child += 1,
+            pearls_core::DepType::Related => related += 1,
+            pearls_core::DepType::DiscoveredFrom => discovered_from += 1,
+        }
+    }
+
+    let mut parts = Vec::new();
+    if blocks > 0 {
+        parts.push(format!("blocks:{}", blocks));
+    }
+    if parent_child > 0 {
+        parts.push(format!("parent_child:{}", parent_child));
+    }
+    if related > 0 {
+        parts.push(format!("related:{}", related));
+    }
+    if discovered_from > 0 {
+        parts.push(format!("discovered_from:{}", discovered_from));
+    }
+
+    parts.join(", ")
+}
+
 /// Factory function to create an appropriate formatter.
 ///
 /// # Arguments
@@ -267,11 +328,15 @@ fn format_timestamp(timestamp: i64) -> String {
 ///
 /// # Returns
 /// A boxed OutputFormatter instance
-pub fn create_formatter(format: &str, use_color: bool) -> Box<dyn OutputFormatter> {
+pub fn create_formatter(
+    format: &str,
+    use_color: bool,
+    absolute_time: bool,
+) -> Box<dyn OutputFormatter> {
     match format {
         "json" => Box::new(JsonFormatter),
-        "table" => Box::new(TableFormatter::new(use_color)),
-        "plain" => Box::new(PlainFormatter),
-        _ => Box::new(TableFormatter::new(use_color)),
+        "table" => Box::new(TableFormatter::new(use_color, absolute_time)),
+        "plain" => Box::new(PlainFormatter::new(absolute_time)),
+        _ => Box::new(TableFormatter::new(use_color, absolute_time)),
     }
 }

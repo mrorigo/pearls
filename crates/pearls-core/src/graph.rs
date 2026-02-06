@@ -8,6 +8,7 @@
 use crate::{DepType, Error, Pearl, Result, Status};
 use petgraph::algo::{is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Issue graph for dependency management.
@@ -272,19 +273,9 @@ impl IssueGraph {
     ///
     /// True if the Pearl has open blocking dependencies, false otherwise.
     pub fn is_blocked(&self, id: &str) -> bool {
-        if let Some(pearl) = self.pearls.get(id) {
-            // Check if any blocking dependencies are open
-            for dep in &pearl.deps {
-                if dep.dep_type == DepType::Blocks {
-                    if let Some(target) = self.pearls.get(&dep.target_id) {
-                        if target.status != Status::Closed {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
+        self.dependencies_by_type(id, DepType::Blocks)
+            .into_iter()
+            .any(|target| target.status != Status::Closed)
     }
 
     /// Returns the list of Pearls that are blocking the given Pearl.
@@ -297,21 +288,36 @@ impl IssueGraph {
     ///
     /// Vector of references to blocking Pearls.
     pub fn blocking_deps(&self, id: &str) -> Vec<&Pearl> {
-        let mut blockers = Vec::new();
+        self.dependencies_by_type(id, DepType::Blocks)
+            .into_iter()
+            .filter(|target| target.status != Status::Closed)
+            .collect()
+    }
+
+    /// Returns dependencies for a given Pearl filtered by dependency type.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The Pearl ID to query
+    /// * `dep_type` - The dependency type to filter by
+    ///
+    /// # Returns
+    ///
+    /// Vector of references to dependencies matching the given type.
+    pub fn dependencies_by_type(&self, id: &str, dep_type: DepType) -> Vec<&Pearl> {
+        let mut deps = Vec::new();
 
         if let Some(pearl) = self.pearls.get(id) {
             for dep in &pearl.deps {
-                if dep.dep_type == DepType::Blocks {
+                if dep.dep_type == dep_type {
                     if let Some(target) = self.pearls.get(&dep.target_id) {
-                        if target.status != Status::Closed {
-                            blockers.push(target);
-                        }
+                        deps.push(target);
                     }
                 }
             }
         }
 
-        blockers
+        deps
     }
 
     /// Returns the ready queue: Pearls that are unblocked and ready for work.
@@ -326,18 +332,28 @@ impl IssueGraph {
     ///
     /// Vector of references to ready Pearls, sorted by priority and recency.
     pub fn ready_queue(&self) -> Vec<&Pearl> {
-        let mut ready: Vec<&Pearl> = self
-            .pearls
-            .values()
-            .filter(|pearl| {
-                // Exclude closed and deferred
-                pearl.status != Status::Closed && pearl.status != Status::Deferred
-            })
-            .filter(|pearl| {
-                // Only include unblocked Pearls
-                !self.is_blocked(&pearl.id)
-            })
-            .collect();
+        const PARALLEL_THRESHOLD: usize = 1_000;
+
+        let mut ready: Vec<&Pearl> = if self.pearls.len() >= PARALLEL_THRESHOLD {
+            self.pearls
+                .par_iter()
+                .filter_map(|(_, pearl)| {
+                    if pearl.status == Status::Closed || pearl.status == Status::Deferred {
+                        return None;
+                    }
+                    if self.is_blocked(&pearl.id) {
+                        return None;
+                    }
+                    Some(pearl)
+                })
+                .collect()
+        } else {
+            self.pearls
+                .values()
+                .filter(|pearl| pearl.status != Status::Closed && pearl.status != Status::Deferred)
+                .filter(|pearl| !self.is_blocked(&pearl.id))
+                .collect()
+        };
 
         // Sort by priority ascending, then by updated_at descending
         ready.sort_by(|a, b| match a.priority.cmp(&b.priority) {

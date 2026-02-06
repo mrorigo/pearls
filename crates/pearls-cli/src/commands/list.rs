@@ -8,6 +8,7 @@
 use crate::OutputFormatter;
 use anyhow::Result;
 use pearls_core::{Pearl, Status, Storage};
+use rayon::prelude::*;
 use std::path::Path;
 
 /// Lists Pearls with optional filtering and sorting.
@@ -56,6 +57,10 @@ pub fn execute(
 
     // Load all Pearls
     let mut pearls = storage.load_all()?;
+    let status_filter = match status_filter {
+        Some(status) => Some(parse_status(&status)?),
+        None => None,
+    };
     let dep_type_filter = dep_type_filter.and_then(parse_dep_type);
 
     // Load archived Pearls if requested
@@ -118,7 +123,7 @@ pub fn execute(
 /// The filtered list of Pearls.
 fn apply_filters(
     pearls: Vec<Pearl>,
-    status_filter: Option<String>,
+    status_filter: Option<Status>,
     priority_filter: Option<u8>,
     label_filters: Vec<String>,
     author_filter: Option<String>,
@@ -128,79 +133,70 @@ fn apply_filters(
     updated_after: Option<i64>,
     updated_before: Option<i64>,
 ) -> Vec<Pearl> {
-    pearls
-        .into_iter()
-        .filter(|p| {
-            // Status filter
-            if let Some(ref status) = status_filter {
-                let matches = match status.to_lowercase().as_str() {
-                    "open" => p.status == Status::Open,
-                    "in_progress" => p.status == Status::InProgress,
-                    "blocked" => p.status == Status::Blocked,
-                    "deferred" => p.status == Status::Deferred,
-                    "closed" => p.status == Status::Closed,
-                    _ => false,
-                };
-                if !matches {
-                    return false;
-                }
-            }
+    const PARALLEL_THRESHOLD: usize = 1_000;
 
-            // Priority filter
-            if let Some(priority) = priority_filter {
-                if p.priority != priority {
-                    return false;
-                }
+    let predicate = |p: &Pearl| {
+        if let Some(status) = status_filter {
+            if p.status != status {
+                return false;
             }
+        }
 
-            // Label filters (all labels must match)
-            if !label_filters.is_empty() {
-                for label in &label_filters {
-                    if !p.labels.iter().any(|l| l.eq_ignore_ascii_case(label)) {
-                        return false;
-                    }
-                }
+        if let Some(priority) = priority_filter {
+            if p.priority != priority {
+                return false;
             }
+        }
 
-            // Author filter
-            if let Some(ref author) = author_filter {
-                if p.author != *author {
+        if !label_filters.is_empty() {
+            for label in &label_filters {
+                if !p.labels.iter().any(|l| l.eq_ignore_ascii_case(label)) {
                     return false;
                 }
             }
+        }
 
-            // Dependency type filter
-            if let Some(dep_type) = dep_type_filter {
-                if !p.deps.iter().any(|dep| dep.dep_type == dep_type) {
-                    return false;
-                }
+        if let Some(ref author) = author_filter {
+            if p.author != *author {
+                return false;
             }
+        }
 
-            // Date range filters
-            if let Some(after) = created_after {
-                if p.created_at < after {
-                    return false;
-                }
+        if let Some(dep_type) = dep_type_filter {
+            if !p.deps.iter().any(|dep| dep.dep_type == dep_type) {
+                return false;
             }
-            if let Some(before) = created_before {
-                if p.created_at > before {
-                    return false;
-                }
-            }
-            if let Some(after) = updated_after {
-                if p.updated_at < after {
-                    return false;
-                }
-            }
-            if let Some(before) = updated_before {
-                if p.updated_at > before {
-                    return false;
-                }
-            }
+        }
 
-            true
-        })
-        .collect()
+        if let Some(after) = created_after {
+            if p.created_at < after {
+                return false;
+            }
+        }
+        if let Some(before) = created_before {
+            if p.created_at > before {
+                return false;
+            }
+        }
+        if let Some(after) = updated_after {
+            if p.updated_at < after {
+                return false;
+            }
+        }
+        if let Some(before) = updated_before {
+            if p.updated_at > before {
+                return false;
+            }
+        }
+
+        true
+    };
+
+    if pearls.len() >= PARALLEL_THRESHOLD {
+        pearls.into_par_iter().filter(|p| predicate(p)).collect()
+    } else {
+        pearls.into_iter().filter(predicate).collect()
+    }
 }
 
 fn parse_dep_type(value: String) -> Option<pearls_core::DepType> {
@@ -210,6 +206,17 @@ fn parse_dep_type(value: String) -> Option<pearls_core::DepType> {
         "related" => Some(pearls_core::DepType::Related),
         "discovered_from" => Some(pearls_core::DepType::DiscoveredFrom),
         _ => None,
+    }
+}
+
+fn parse_status(value: &str) -> Result<Status> {
+    match value.to_lowercase().as_str() {
+        "open" => Ok(Status::Open),
+        "in_progress" => Ok(Status::InProgress),
+        "blocked" => Ok(Status::Blocked),
+        "deferred" => Ok(Status::Deferred),
+        "closed" => Ok(Status::Closed),
+        _ => anyhow::bail!("Invalid status filter: {}", value),
     }
 }
 
@@ -271,6 +278,33 @@ mod tests {
             None,
         );
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_date_range_filters() {
+        let mut pearl1 = sample_pearl("prl-abc123", "core");
+        pearl1.created_at = 1000;
+        pearl1.updated_at = 2000;
+
+        let mut pearl2 = sample_pearl("prl-def456", "core");
+        pearl2.created_at = 3000;
+        pearl2.updated_at = 4000;
+
+        let filtered = apply_filters(
+            vec![pearl1, pearl2],
+            None,
+            None,
+            Vec::new(),
+            None,
+            None,
+            Some(2000),
+            Some(3500),
+            Some(1500),
+            Some(4500),
+        );
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "prl-def456");
     }
 }
 

@@ -6,7 +6,10 @@
 
 use anyhow::Result;
 use pearls_core::{Pearl, Storage};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
+
+use crate::progress::ProgressReporter;
 
 /// Imports Pearls from a Beads JSONL file.
 ///
@@ -35,15 +38,21 @@ pub fn import_beads(path: String) -> Result<()> {
         anyhow::bail!("Beads file not found: {}", beads_path.display());
     }
 
-    let content = std::fs::read_to_string(&beads_path)?;
+    let file = std::fs::File::open(&beads_path)?;
+    let reader = std::io::BufReader::with_capacity(64 * 1024, file);
     let mut pearls = Vec::new();
     let mut skipped = 0usize;
+    let mut processed = 0usize;
+    let progress = ProgressReporter::new("Importing", None, 1000);
 
-    for (idx, line) in content.lines().enumerate() {
+    for (idx, line) in reader.lines().enumerate() {
+        let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<Pearl>(line) {
+        processed += 1;
+        progress.report(processed);
+        match serde_json::from_str::<Pearl>(&line) {
             Ok(pearl) => {
                 if let Err(err) = pearl.validate() {
                     skipped += 1;
@@ -66,6 +75,7 @@ pub fn import_beads(path: String) -> Result<()> {
             }
         }
     }
+    progress.finish(processed);
 
     if pearls.is_empty() {
         anyhow::bail!("No valid Pearls found in Beads file.");

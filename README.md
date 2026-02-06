@@ -46,6 +46,37 @@ Git hook implementations:
 cargo build
 ```
 
+## Usage
+
+Initialize a repository and create your first Pearl:
+
+```bash
+prl init
+prl create "Add search index" --priority 1 --label storage,performance
+```
+
+Common workflows:
+
+```bash
+# List open Pearls sorted by most recent update
+prl list --status open --sort updated_at
+
+# Show a Pearl by full or partial ID
+prl show prl-abc123
+prl show abc
+
+# Add a blocking dependency
+prl link prl-abc123 prl-def456 blocks
+
+# Update a Pearl
+prl update prl-abc123 --status in_progress --add-label urgent
+
+# Archive closed Pearls older than 30 days
+prl compact --threshold-days 30
+```
+
+See `examples/WORKFLOW.md` for a longer sample workflow.
+
 ## Testing
 
 ```bash

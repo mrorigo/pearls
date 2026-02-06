@@ -8,15 +8,20 @@ use clap::Parser;
 
 pub mod commands;
 pub mod output;
+pub mod progress;
 pub mod terminal;
 
 pub use output::{create_formatter, OutputFormatter};
 pub use terminal::{get_terminal_width, should_use_color, wrap_text};
 
-/// Pearls CLI - Git-native distributed issue tracking
 #[derive(Parser, Debug)]
-#[command(name = "prl")]
-#[command(version, about, long_about = None)]
+#[command(
+    name = "prl",
+    version,
+    about = "Pearls: Git-native distributed issue tracking",
+    long_about = "Pearls is a Git-native issue tracker designed for agentic workflows. It stores all issues in JSONL and integrates with Git merges and hooks.",
+    after_help = "Examples:\n  prl init\n  prl create \"Add index rebuild\" --priority 1 --label storage,performance\n  prl list --status open --sort updated_at\n  prl show prl-abc123\n  prl link prl-abc123 prl-def456 blocks\n  prl compact --threshold-days 30\n"
+)]
 struct Cli {
     /// Enable JSON output
     #[arg(long, global = true)]
@@ -29,6 +34,10 @@ struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
     no_color: bool,
+
+    /// Display timestamps as absolute UTC times
+    #[arg(long, global = true)]
+    absolute_time: bool,
 
     /// Custom config file path
     #[arg(long, global = true)]
@@ -291,7 +300,7 @@ fn main() -> anyhow::Result<()> {
         Some(OutputFormat::Plain) => "plain",
         None => "table",
     };
-    let formatter = create_formatter(format, use_color);
+    let formatter = create_formatter(format, use_color, cli.absolute_time);
 
     match cli.command {
         Some(Commands::Init) => {

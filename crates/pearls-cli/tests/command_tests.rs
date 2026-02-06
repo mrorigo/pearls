@@ -3,11 +3,12 @@
 //! Integration tests for CLI commands.
 
 use git2::Repository;
-use pearls_core::{DepType, IssueGraph, Storage};
+use pearls_cli::OutputFormatter;
+use pearls_core::{DepType, IssueGraph, Pearl, Storage};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 /// Helper to verify .pearls directory structure.
@@ -24,6 +25,7 @@ fn verify_pearls_dir(pearls_dir: &Path) {
 }
 
 static DIR_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct DirGuard {
     previous: PathBuf,
@@ -44,6 +46,19 @@ fn enter_dir(path: &Path) -> DirGuard {
         previous,
         _lock: lock,
     }
+}
+
+#[cfg(unix)]
+fn write_fake_git(bin_dir: &Path, script: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let git_path = bin_dir.join("git");
+    fs::write(&git_path, script).expect("Failed to write fake git");
+    let mut perms = fs::metadata(&git_path)
+        .expect("Failed to read fake git metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&git_path, perms).expect("Failed to set fake git permissions");
 }
 
 fn init_repo(base: &Path) -> PathBuf {
@@ -87,6 +102,32 @@ fn add_file_and_commit(repo: &Repository, path: &Path, content: &str, message: &
         .expect("Failed to add path");
     index.write().expect("Failed to write index");
     create_commit(repo, message);
+}
+
+struct CaptureFormatter {
+    captured: Arc<Mutex<Vec<Pearl>>>,
+}
+
+impl OutputFormatter for CaptureFormatter {
+    fn format_pearl(&self, pearl: &Pearl) -> String {
+        self.captured
+            .lock()
+            .expect("capture lock")
+            .push(pearl.clone());
+        "ok".to_string()
+    }
+
+    fn format_list(&self, pearls: &[Pearl]) -> String {
+        self.captured
+            .lock()
+            .expect("capture lock")
+            .extend_from_slice(pearls);
+        "ok".to_string()
+    }
+
+    fn format_error(&self, error: &str) -> String {
+        error.to_string()
+    }
 }
 
 #[test]
@@ -842,4 +883,219 @@ fn test_sync_pushes_to_remote() {
     }
 
     pearls_cli::commands::sync::execute(false).expect("Sync failed");
+}
+
+#[test]
+fn test_update_refreshes_updated_at() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let mut pearl = pearls_core::Pearl::new("Timestamp Pearl".to_string(), "author".to_string());
+    pearl.updated_at = 1;
+
+    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    storage.save(&pearl).expect("Failed to save pearl");
+
+    pearls_cli::commands::update::execute(
+        pearl.id.clone(),
+        Some("Updated Title".to_string()),
+        None,
+        None,
+        None,
+        None,
+        vec![],
+        vec![],
+    )
+    .expect("Update failed");
+
+    let mut reload_storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let updated = reload_storage
+        .load_by_id(&pearl.id)
+        .expect("Failed to reload pearl");
+    assert!(updated.updated_at > 1, "updated_at should be refreshed");
+}
+
+#[test]
+fn test_show_includes_archived_pearl() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let archived_pearl =
+        pearls_core::Pearl::new("Archived Pearl".to_string(), "author".to_string());
+    let archive_path = temp_dir.path().join(".pearls/archive.jsonl");
+    let mut archive_storage = Storage::new(archive_path).expect("Failed to create archive storage");
+    archive_storage
+        .save(&archived_pearl)
+        .expect("Failed to save archived pearl");
+
+    let formatter = CaptureFormatter {
+        captured: Arc::new(Mutex::new(Vec::new())),
+    };
+    pearls_cli::commands::show::execute(archived_pearl.id.clone(), true, &formatter)
+        .expect("Show with archived failed");
+}
+
+#[test]
+fn test_list_includes_archived_pearl() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let active = pearls_core::Pearl::new("Active Pearl".to_string(), "author".to_string());
+    let archived = pearls_core::Pearl::new("Archived Pearl".to_string(), "author".to_string());
+
+    let mut active_storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    active_storage
+        .save(&active)
+        .expect("Failed to save active pearl");
+
+    let mut archive_storage = Storage::new(temp_dir.path().join(".pearls/archive.jsonl"))
+        .expect("Failed to create storage");
+    archive_storage
+        .save(&archived)
+        .expect("Failed to save archived pearl");
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let formatter = CaptureFormatter {
+        captured: Arc::clone(&captured),
+    };
+
+    pearls_cli::commands::list::execute(
+        None,
+        None,
+        Vec::new(),
+        None,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &formatter,
+    )
+    .expect("List with archived failed");
+
+    let captured = captured.lock().expect("capture lock");
+    let ids: Vec<String> = captured.iter().map(|p| p.id.clone()).collect();
+    assert!(ids.contains(&active.id), "Active pearl should be in list");
+    assert!(
+        ids.contains(&archived.id),
+        "Archived pearl should be in list"
+    );
+}
+
+#[test]
+fn test_create_with_author_override() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    pearls_cli::commands::create::execute(
+        "Author Pearl".to_string(),
+        None,
+        None,
+        None,
+        vec![],
+        Some("alice".to_string()),
+    )
+    .expect("Create failed");
+
+    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), 1, "Expected one pearl");
+    assert_eq!(pearls[0].author, "alice");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_create_uses_git_author_when_available() {
+    let _env_guard = ENV_LOCK.lock().expect("Failed to lock env mutex");
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let bin_dir = temp_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("Failed to create bin dir");
+    write_fake_git(
+        &bin_dir,
+        "#!/bin/sh\nif [ \"$1\" = \"config\" ] && [ \"$2\" = \"user.name\" ]; then\n  echo \"git-author\"\n  exit 0\nfi\nexit 1\n",
+    );
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), original_path));
+
+    pearls_cli::commands::create::execute(
+        "Git Author Pearl".to_string(),
+        None,
+        None,
+        None,
+        vec![],
+        None,
+    )
+    .expect("Create failed");
+
+    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), 1, "Expected one pearl");
+    assert_eq!(pearls[0].author, "git-author");
+
+    std::env::set_var("PATH", original_path);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_create_falls_back_to_system_username() {
+    let _env_guard = ENV_LOCK.lock().expect("Failed to lock env mutex");
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let bin_dir = temp_dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("Failed to create bin dir");
+    write_fake_git(
+        &bin_dir,
+        "#!/bin/sh\nif [ \"$1\" = \"config\" ] && [ \"$2\" = \"user.name\" ]; then\n  echo \"\"\n  exit 0\nfi\nexit 1\n",
+    );
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let original_user = std::env::var("USER").ok();
+    std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), original_path));
+    std::env::set_var("USER", "env-author");
+
+    pearls_cli::commands::create::execute(
+        "Env Author Pearl".to_string(),
+        None,
+        None,
+        None,
+        vec![],
+        None,
+    )
+    .expect("Create failed");
+
+    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), 1, "Expected one pearl");
+    assert_eq!(pearls[0].author, "env-author");
+
+    std::env::set_var("PATH", original_path);
+    if let Some(user) = original_user {
+        std::env::set_var("USER", user);
+    } else {
+        std::env::remove_var("USER");
+    }
 }

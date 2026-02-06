@@ -59,13 +59,9 @@ pub fn execute(
     // Load the specific Pearl
     let mut pearl = storage.load_by_id(&full_id)?;
 
-    // Track what was updated for output
-    let mut updated_fields = Vec::new();
-
     // Apply updates
     if let Some(new_title) = title {
         pearl.title = new_title;
-        updated_fields.push("title");
     }
 
     let mut provided_description = description;
@@ -76,7 +72,6 @@ pub fn execute(
     if let Some(new_description) = provided_description {
         enforce_description_limit(&new_description)?;
         pearl.description = new_description;
-        updated_fields.push("description");
     }
 
     if let Some(new_priority) = priority {
@@ -84,7 +79,6 @@ pub fn execute(
             anyhow::bail!("Priority must be 0-4, got {}", new_priority);
         }
         pearl.priority = new_priority;
-        updated_fields.push("priority");
     }
 
     if let Some(new_status) = status {
@@ -99,7 +93,6 @@ pub fn execute(
         let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
         pearls_core::fsm::validate_transition(&pearl, new_status_enum, &graph)?;
         pearl.status = new_status_enum;
-        updated_fields.push("status");
     }
 
     // Handle label updates
@@ -109,14 +102,12 @@ pub fn execute(
                 pearl.labels.push(label.clone());
             }
         }
-        updated_fields.push("labels");
     }
 
     if !remove_labels.is_empty() {
         for label in &remove_labels {
             pearl.labels.retain(|l| l != label);
         }
-        updated_fields.push("labels");
     }
 
     // Update the updated_at timestamp

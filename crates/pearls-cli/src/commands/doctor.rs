@@ -7,7 +7,10 @@
 use anyhow::Result;
 use pearls_core::{IssueGraph, Pearl, Status, Storage};
 use std::collections::HashSet;
+use std::io::BufRead;
 use std::path::Path;
+
+use crate::progress::ProgressReporter;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Severity {
@@ -50,12 +53,18 @@ pub fn execute(fix: bool) -> Result<()> {
     let mut has_closed_blocked_error = false;
 
     if issues_path.exists() {
-        let content = std::fs::read_to_string(&issues_path)?;
-        for (idx, line) in content.lines().enumerate() {
+        let file = std::fs::File::open(&issues_path)?;
+        let reader = std::io::BufReader::with_capacity(64 * 1024, file);
+        let progress = ProgressReporter::new("Doctor scan", None, 1000);
+        let mut processed = 0usize;
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
-            match serde_json::from_str::<Pearl>(line) {
+            processed += 1;
+            progress.report(processed);
+            match serde_json::from_str::<Pearl>(&line) {
                 Ok(pearl) => {
                     if let Err(err) = pearl.validate() {
                         findings.push(Finding {
@@ -74,6 +83,7 @@ pub fn execute(fix: bool) -> Result<()> {
                 }
             }
         }
+        progress.finish(processed);
     }
 
     let (deduped, duplicate_ids) = dedupe_pearls(&pearls);

@@ -534,7 +534,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Test post-merge integrity checks
     - _Requirements: 9.1-9.7_
 
-- [ ] 21. Checkpoint - Validate Git integration
+- [x] 21. Checkpoint - Validate Git integration
   - Ensure merge driver handles all conflict scenarios
   - Test hooks trigger correctly on Git operations
   - Test full Git workflow: branch → modify → merge
@@ -603,29 +603,29 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Test unknown field preservation
     - _Requirements: 24.1-24.5, 19.1-19.5_
 
-- [ ] 24. Implement author and timestamp features
-  - [ ] 24.1 Add author tracking to create command
+- [x] 24. Implement author and timestamp features
+  - [x] 24.1 Add author tracking to create command
     - Derive author from Git config (user.name)
     - Fall back to system username if Git config unavailable
     - Support --author flag for override
     - _Requirements: 25.1, 25.2, 25.3, 25.4_
   
-  - [ ] 24.2 Add timestamp display formatting
+  - [x] 24.2 Add timestamp display formatting
     - Format timestamps as human-readable (e.g., "2 days ago")
     - Support absolute timestamp display with flag
     - _Requirements: 26.3_
   
-  - [ ] 24.3 Add date range filtering to list command
+  - [x] 24.3 Add date range filtering to list command
     - Support --created-after and --created-before flags
     - Support --updated-after and --updated-before flags
     - _Requirements: 26.4_
   
-  - [ ] 24.4 Write property tests for timestamps
+  - [x] 24.4 Write property tests for timestamps
     - **Property 39: Timestamp Update on Modification**
     - **Property 40: Timestamp Immutability on Read**
     - **Validates: Requirements 26.1, 26.2, 26.5**
   
-  - [ ] 24.5 Write unit tests for author and timestamp features
+  - [x] 24.5 Write unit tests for author and timestamp features
     - Test author derivation from Git config
     - Test author fallback to system username
     - Test timestamp formatting
@@ -633,62 +633,62 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - _Requirements: 25.1-25.5, 26.1-26.5_
 
 
-- [ ] 25. Implement dependency type semantics
-  - [ ] 25.1 Add dependency type filtering to graph queries
+- [x] 25. Implement dependency type semantics
+  - [x] 25.1 Add dependency type filtering to graph queries
     - Filter by dependency type in blocking_deps() method
     - Only "blocks" type affects FSM constraints
     - Other types are informational only
     - _Requirements: 27.1, 27.2, 27.3, 27.4_
   
-  - [ ] 25.2 Add dependency type display to show command
+  - [x] 25.2 Add dependency type display to show command
     - Display all dependencies with their types
     - Highlight blocking dependencies
     - _Requirements: 27.5_
   
-  - [ ] 25.3 Add dependency type filtering to list command
+  - [x] 25.3 Add dependency type filtering to list command
     - Support --dep-type flag to filter by dependency type
     - _Requirements: 27.6_
   
-  - [ ] 25.4 Write unit tests for dependency type semantics
+  - [x] 25.4 Write unit tests for dependency type semantics
     - Test blocks type affects FSM
     - Test other types don't affect FSM
     - Test dependency type filtering
     - _Requirements: 27.1-27.6_
 
-- [ ] 26. Implement archive query support
-  - [ ] 26.1 Modify show command to search archive
+- [x] 26. Implement archive query support
+  - [x] 26.1 Modify show command to search archive
     - Check issues.jsonl first
     - Fall back to archive.jsonl if not found
     - _Requirements: 14.5_
   
-  - [ ] 26.2 Modify list command to support --include-archived flag
+  - [x] 26.2 Modify list command to support --include-archived flag
     - Load both active and archived Pearls when flag present
     - Mark archived Pearls in output
     - _Requirements: 14.5_
   
-  - [ ] 26.3 Write unit tests for archive queries
+  - [x] 26.3 Write unit tests for archive queries
     - Test show finds archived Pearls
     - Test list includes archived Pearls with flag
     - _Requirements: 14.5_
 
-- [ ] 27. Add performance optimizations
-  - [ ] 27.1 Implement parallel processing with rayon
+- [x] 27. Add performance optimizations
+  - [x] 27.1 Implement parallel processing with rayon
     - Use rayon for parallel Pearl processing in list command
     - Use rayon for parallel graph operations where applicable
     - _Requirements: 10.4_
   
-  - [ ] 27.2 Optimize streaming deserialization
+  - [x] 27.2 Optimize streaming deserialization
     - Ensure early termination in load_by_id()
     - Use streaming for large file operations
     - _Requirements: 10.2, 10.3, 29.1, 29.2, 29.3_
   
-  - [ ] 27.3 Add progress indicators for long operations
+  - [x] 27.3 Add progress indicators for long operations
     - Show progress for compact operation
     - Show progress for doctor operation
     - Show progress for import operation
     - _Requirements: 13.6_
   
-  - [ ] 27.4 Write performance benchmarks
+  - [x] 27.4 Write performance benchmarks
     - Benchmark load_all with 1000 Pearls
     - Benchmark topological_sort with 1000 nodes
     - Benchmark create operation
@@ -696,25 +696,25 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Verify targets: load <10ms, toposort <5ms, create <1ms, ready <15ms
     - _Requirements: 10.1, 10.5_
 
-- [ ] 28. Final integration and polish
-  - [ ] 28.1 Add comprehensive error handling
+- [x] 28. Final integration and polish
+  - [x] 28.1 Add comprehensive error handling
     - Ensure all errors have descriptive messages
     - Add context to errors where helpful
     - Test error messages for agent-friendliness
     - _Requirements: 11.1-11.7_
   
-  - [ ] 28.2 Add comprehensive documentation
+  - [x] 28.2 Add comprehensive documentation
     - Write README.md with installation and usage
     - Add doc comments to all public APIs
     - Create examples directory with sample workflows
     - _Requirements: All (documentation)_
   
-  - [ ] 28.3 Add CLI help text and examples
+  - [x] 28.3 Add CLI help text and examples
     - Ensure all commands have clear help text
     - Add examples to help output
     - _Requirements: 7.1-7.15_
   
-  - [ ] 28.4 Write end-to-end integration tests
+  - [x] 28.4 Write end-to-end integration tests
     - Test full workflow: init → create → link → ready → close → compact
     - Test Git workflow: init → create → commit → branch → merge
     - Test concurrent access scenarios
@@ -727,6 +727,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
   - Test on Linux, macOS, Windows
   - Verify all requirements are met
   - Ask the user if questions arise
+  - Note: Local `cargo test`/`cargo bench` blocked by offline crates.io access.
 
 ## Notes
 

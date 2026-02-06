@@ -26,7 +26,7 @@ fn test_json_formatter_single_pearl() {
     use pearls_cli::create_formatter;
 
     let pearl = create_test_pearl();
-    let formatter = create_formatter("json", false);
+    let formatter = create_formatter("json", false, false);
     let output = formatter.format_pearl(&pearl);
 
     assert!(output.contains("prl-a1b2c3"));
@@ -42,7 +42,7 @@ fn test_json_formatter_pearl_list() {
     let mut pearl2 = create_test_pearl();
     pearl2.id = "prl-d4e5f6".to_string();
 
-    let formatter = create_formatter("json", false);
+    let formatter = create_formatter("json", false, false);
     let output = formatter.format_list(&[pearl1, pearl2]);
 
     assert!(output.contains("prl-a1b2c3"));
@@ -54,7 +54,7 @@ fn test_json_formatter_pearl_list() {
 fn test_json_formatter_error() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("json", false);
+    let formatter = create_formatter("json", false, false);
     let output = formatter.format_error("Test error message");
 
     assert!(output.contains("Test error message"));
@@ -66,12 +66,23 @@ fn test_table_formatter_single_pearl() {
     use pearls_cli::create_formatter;
 
     let pearl = create_test_pearl();
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let output = formatter.format_pearl(&pearl);
 
     assert!(output.contains("prl-a1b2c3"));
     assert!(output.contains("Test Pearl"));
     assert!(output.contains("test-author"));
+}
+
+#[test]
+fn test_table_formatter_absolute_time() {
+    use pearls_cli::create_formatter;
+
+    let pearl = create_test_pearl();
+    let formatter = create_formatter("table", false, true);
+    let output = formatter.format_pearl(&pearl);
+
+    assert!(output.contains("UTC"));
 }
 
 #[test]
@@ -83,7 +94,7 @@ fn test_table_formatter_pearl_list() {
     pearl2.id = "prl-d4e5f6".to_string();
     pearl2.title = "Another Pearl".to_string();
 
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let output = formatter.format_list(&[pearl1, pearl2]);
 
     assert!(output.contains("prl-a1b2c3"));
@@ -91,13 +102,14 @@ fn test_table_formatter_pearl_list() {
     assert!(output.contains("Test Pearl"));
     assert!(output.contains("Another Pearl"));
     assert!(output.contains("P1"));
+    assert!(output.contains("Deps"));
 }
 
 #[test]
 fn test_table_formatter_empty_list() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let output = formatter.format_list(&[]);
 
     assert!(output.contains("No Pearls found"));
@@ -107,7 +119,7 @@ fn test_table_formatter_empty_list() {
 fn test_table_formatter_error() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let output = formatter.format_error("Test error message");
 
     assert!(output.contains("Error"));
@@ -119,7 +131,7 @@ fn test_plain_formatter_single_pearl() {
     use pearls_cli::create_formatter;
 
     let pearl = create_test_pearl();
-    let formatter = create_formatter("plain", false);
+    let formatter = create_formatter("plain", false, false);
     let output = formatter.format_pearl(&pearl);
 
     assert!(output.contains("prl-a1b2c3"));
@@ -135,19 +147,20 @@ fn test_plain_formatter_pearl_list() {
     let mut pearl2 = create_test_pearl();
     pearl2.id = "prl-d4e5f6".to_string();
 
-    let formatter = create_formatter("plain", false);
+    let formatter = create_formatter("plain", false, false);
     let output = formatter.format_list(&[pearl1, pearl2]);
 
     assert!(output.contains("prl-a1b2c3"));
     assert!(output.contains("prl-d4e5f6"));
     assert!(output.contains("P1"));
+    assert!(output.contains("test-author"));
 }
 
 #[test]
 fn test_plain_formatter_empty_list() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("plain", false);
+    let formatter = create_formatter("plain", false, false);
     let output = formatter.format_list(&[]);
 
     assert!(output.contains("No Pearls found"));
@@ -157,7 +170,7 @@ fn test_plain_formatter_empty_list() {
 fn test_plain_formatter_error() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("plain", false);
+    let formatter = create_formatter("plain", false, false);
     let output = formatter.format_error("Test error message");
 
     assert!(output.contains("Error"));
@@ -168,7 +181,7 @@ fn test_plain_formatter_error() {
 fn test_formatter_factory_json() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("json", false);
+    let formatter = create_formatter("json", false, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 
@@ -181,7 +194,7 @@ fn test_formatter_factory_json() {
 fn test_formatter_factory_table() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 
@@ -193,7 +206,7 @@ fn test_formatter_factory_table() {
 fn test_formatter_factory_plain() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("plain", false);
+    let formatter = create_formatter("plain", false, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 
@@ -205,7 +218,7 @@ fn test_formatter_factory_plain() {
 fn test_formatter_factory_unknown_format_defaults_to_table() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("unknown", false);
+    let formatter = create_formatter("unknown", false, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 
@@ -218,7 +231,7 @@ fn test_json_formatter_preserves_all_fields() {
     use pearls_cli::create_formatter;
 
     let pearl = create_test_pearl();
-    let formatter = create_formatter("json", false);
+    let formatter = create_formatter("json", false, false);
     let output = formatter.format_pearl(&pearl);
 
     assert!(output.contains("\"id\""));
@@ -233,7 +246,7 @@ fn test_json_formatter_preserves_all_fields() {
 fn test_table_formatter_with_color_flag() {
     use pearls_cli::create_formatter;
 
-    let formatter = create_formatter("table", true);
+    let formatter = create_formatter("table", true, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 
@@ -247,7 +260,7 @@ fn test_no_color_environment_variable_respected() {
 
     // This test verifies that the formatter respects NO_COLOR
     // The actual color behavior depends on environment
-    let formatter = create_formatter("table", false);
+    let formatter = create_formatter("table", false, false);
     let pearl = create_test_pearl();
     let output = formatter.format_pearl(&pearl);
 

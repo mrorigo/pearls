@@ -112,6 +112,48 @@ proptest! {
         prop_assert_eq!(pearl, loaded);
     }
 
+    /// **Property 39: Timestamp Update on Modification**
+    ///
+    /// **Validates: Requirements 26.2**
+    #[test]
+    fn test_timestamp_update_on_modification(
+        mut pearl in arb_pearl(),
+        delta in 1i64..1_000_000i64
+    ) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let storage_path = temp_dir.path().join("test.jsonl");
+
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
+            .expect("Failed to create storage");
+
+        let original_updated = pearl.updated_at;
+        storage.save(&pearl).expect("Failed to save pearl");
+
+        pearl.updated_at = original_updated + delta;
+        storage.save(&pearl).expect("Failed to save updated pearl");
+
+        let loaded = storage.load_by_id(&pearl.id).expect("Failed to load pearl");
+        prop_assert_eq!(loaded.updated_at, original_updated + delta);
+    }
+
+    /// **Property 40: Timestamp Immutability on Read**
+    ///
+    /// **Validates: Requirements 26.1, 26.5**
+    #[test]
+    fn test_timestamp_immutability_on_read(pearl in arb_pearl()) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let storage_path = temp_dir.path().join("test.jsonl");
+
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
+            .expect("Failed to create storage");
+
+        storage.save(&pearl).expect("Failed to save pearl");
+        let loaded = storage.load_by_id(&pearl.id).expect("Failed to load pearl");
+
+        prop_assert_eq!(loaded.created_at, pearl.created_at);
+        prop_assert_eq!(loaded.updated_at, pearl.updated_at);
+    }
+
     /// **Property 3: Multi-Pearl Separation**
     ///
     /// **Validates: Requirements 1.4**
