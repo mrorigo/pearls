@@ -55,10 +55,7 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
     }
 
     // Apply limit if specified
-    let display_ready: Vec<_> = ready
-        .iter()
-        .take(limit.unwrap_or(usize::MAX))
-        .collect();
+    let display_ready: Vec<_> = ready.iter().take(limit.unwrap_or(usize::MAX)).collect();
 
     println!("Ready Queue ({} items):", display_ready.len());
     println!();
@@ -66,7 +63,10 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
     for pearl in display_ready {
         let priority_str = format!("P{}", pearl.priority);
         let status_str = format!("{:?}", pearl.status);
-        println!("  {} [{}] {} - {}", pearl.id, priority_str, status_str, pearl.title);
+        println!(
+            "  {} [{}] {} - {}",
+            pearl.id, priority_str, status_str, pearl.title
+        );
         if !pearl.description.is_empty() {
             let desc = if pearl.description.len() > 60 {
                 format!("{}...", &pearl.description[..60])

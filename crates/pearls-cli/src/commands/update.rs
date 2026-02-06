@@ -36,6 +36,7 @@ pub fn execute(
     id: String,
     title: Option<String>,
     description: Option<String>,
+    description_file: Option<String>,
     priority: Option<u8>,
     status: Option<String>,
     add_labels: Vec<String>,
@@ -49,7 +50,7 @@ pub fn execute(
     }
 
     // Load all Pearls to resolve partial ID
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
     let all_pearls = storage.load_all()?;
 
     // Resolve partial ID
@@ -67,7 +68,13 @@ pub fn execute(
         updated_fields.push("title");
     }
 
-    if let Some(new_description) = description {
+    let mut provided_description = description;
+    if let Some(desc_path) = description_file {
+        provided_description = Some(read_description_from_path(&desc_path)?);
+    }
+
+    if let Some(new_description) = provided_description {
+        enforce_description_limit(&new_description)?;
         pearl.description = new_description;
         updated_fields.push("description");
     }
@@ -89,6 +96,8 @@ pub fn execute(
             "closed" => pearls_core::Status::Closed,
             _ => anyhow::bail!("Invalid status: {}", new_status),
         };
+        let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
+        pearls_core::fsm::validate_transition(&pearl, new_status_enum, &graph)?;
         pearl.status = new_status_enum;
         updated_fields.push("status");
     }
@@ -112,15 +121,16 @@ pub fn execute(
 
     // Update the updated_at timestamp
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs() as i64;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
     pearl.updated_at = now;
 
     // Validate Pearl
     pearl.validate()?;
 
     // Save to storage
+    if !add_labels.is_empty() {
+        suggest_labels(&storage, &add_labels)?;
+    }
     storage.save(&pearl)?;
 
     println!("✓ Updated Pearl: {}", pearl.id);
@@ -134,5 +144,55 @@ pub fn execute(
         println!("  Labels: {}", pearl.labels.join(", "));
     }
 
+    Ok(())
+}
+
+fn read_description_from_path(path: &str) -> Result<String> {
+    if path == "-" {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        return Ok(buffer);
+    }
+
+    Ok(std::fs::read_to_string(path)?)
+}
+
+fn enforce_description_limit(description: &str) -> Result<()> {
+    const MAX_BYTES: usize = 64 * 1024;
+    if description.as_bytes().len() > MAX_BYTES {
+        anyhow::bail!("Description exceeds 64KB limit");
+    }
+    Ok(())
+}
+
+fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
+    let existing = storage.load_all().unwrap_or_default();
+    if existing.is_empty() {
+        return Ok(());
+    }
+    let existing_labels: Vec<String> = existing
+        .iter()
+        .flat_map(|pearl| pearl.labels.clone())
+        .collect();
+    if existing_labels.is_empty() {
+        return Ok(());
+    }
+    let lower_existing: std::collections::HashSet<String> = existing_labels
+        .iter()
+        .map(|label| label.to_lowercase())
+        .collect();
+    let mut missing = Vec::new();
+    for label in labels {
+        if !lower_existing.contains(&label.to_lowercase()) {
+            missing.push(label.clone());
+        }
+    }
+    if !missing.is_empty() {
+        eprintln!(
+            "Label suggestions: existing labels include {}",
+            existing_labels.join(", ")
+        );
+    }
     Ok(())
 }

@@ -90,6 +90,7 @@ fn test_table_formatter_pearl_list() {
     assert!(output.contains("prl-d4e5f6"));
     assert!(output.contains("Test Pearl"));
     assert!(output.contains("Another Pearl"));
+    assert!(output.contains("P1"));
 }
 
 #[test]
@@ -123,6 +124,7 @@ fn test_plain_formatter_single_pearl() {
 
     assert!(output.contains("prl-a1b2c3"));
     assert!(output.contains("Test Pearl"));
+    assert!(output.contains("P1"));
 }
 
 #[test]
@@ -138,6 +140,7 @@ fn test_plain_formatter_pearl_list() {
 
     assert!(output.contains("prl-a1b2c3"));
     assert!(output.contains("prl-d4e5f6"));
+    assert!(output.contains("P1"));
 }
 
 #[test]

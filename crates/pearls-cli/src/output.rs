@@ -5,6 +5,7 @@
 //! This module provides functionality for formatting Pearls data
 //! in various output formats (JSON, table, plain text).
 
+use chrono::{DateTime, Duration, Utc};
 use pearls_core::Pearl;
 use serde_json::json;
 use std::io::Write;
@@ -95,10 +96,16 @@ impl OutputFormatter for TableFormatter {
         output.push_str(&format!("ID:          {}\n", pearl.id));
         output.push_str(&format!("Title:       {}\n", pearl.title));
         output.push_str(&format!("Status:      {:?}\n", pearl.status));
-        output.push_str(&format!("Priority:    {}\n", pearl.priority));
+        output.push_str(&format!("Priority:    P{}\n", pearl.priority));
         output.push_str(&format!("Author:      {}\n", pearl.author));
-        output.push_str(&format!("Created:     {}\n", pearl.created_at));
-        output.push_str(&format!("Updated:     {}\n", pearl.updated_at));
+        output.push_str(&format!(
+            "Created:     {}\n",
+            format_timestamp(pearl.created_at)
+        ));
+        output.push_str(&format!(
+            "Updated:     {}\n",
+            format_timestamp(pearl.updated_at)
+        ));
 
         if !pearl.description.is_empty() {
             output.push_str(&format!("Description: {}\n", pearl.description));
@@ -124,10 +131,20 @@ impl OutputFormatter for TableFormatter {
         builder.push_record(vec!["ID", "Status", "Priority", "Title", "Author"]);
 
         for pearl in pearls {
+            let is_archived = pearl
+                .metadata
+                .get("archived")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let id_display = if is_archived {
+                format!("{}*", pearl.id)
+            } else {
+                pearl.id.clone()
+            };
             builder.push_record(vec![
-                &pearl.id,
+                &id_display,
                 &format!("{:?}", pearl.status),
-                &pearl.priority.to_string(),
+                &format!("P{}", pearl.priority),
                 &pearl.title,
                 &pearl.author,
             ]);
@@ -166,8 +183,12 @@ impl OutputFormatter for PlainFormatter {
         output.push_str(&format!("{}\n", pearl.id));
         output.push_str(&format!("{}\n", pearl.title));
         output.push_str(&format!("{:?}\n", pearl.status));
-        output.push_str(&format!("{}\n", pearl.priority));
+        output.push_str(&format!("P{}\n", pearl.priority));
         output.push_str(&format!("{}\n", pearl.author));
+        output.push_str(&format!(
+            "Updated: {}\n",
+            format_timestamp(pearl.updated_at)
+        ));
 
         if !pearl.description.is_empty() {
             output.push_str(&format!("{}\n", pearl.description));
@@ -183,9 +204,23 @@ impl OutputFormatter for PlainFormatter {
 
         let mut output = String::new();
         for pearl in pearls {
+            let is_archived = pearl
+                .metadata
+                .get("archived")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let id_display = if is_archived {
+                format!("{}*", pearl.id)
+            } else {
+                pearl.id.clone()
+            };
             output.push_str(&format!(
-                "{} {} {} {}\n",
-                pearl.id, pearl.status as u8, pearl.priority, pearl.title
+                "{} {:?} P{} {} ({})\n",
+                id_display,
+                pearl.status,
+                pearl.priority,
+                pearl.title,
+                format_timestamp(pearl.updated_at)
             ));
         }
         output
@@ -194,6 +229,34 @@ impl OutputFormatter for PlainFormatter {
     fn format_error(&self, error: &str) -> String {
         format!("Error: {}", error)
     }
+}
+
+fn format_timestamp(timestamp: i64) -> String {
+    let dt = match DateTime::<Utc>::from_timestamp(timestamp, 0) {
+        Some(value) => value,
+        None => return timestamp.to_string(),
+    };
+    let now = Utc::now();
+    let delta = now.signed_duration_since(dt);
+    if delta < Duration::seconds(0) {
+        return dt.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+    }
+    if delta < Duration::minutes(1) {
+        return "just now".to_string();
+    }
+    if delta < Duration::hours(1) {
+        let minutes = delta.num_minutes();
+        return format!("{} minutes ago", minutes);
+    }
+    if delta < Duration::days(1) {
+        let hours = delta.num_hours();
+        return format!("{} hours ago", hours);
+    }
+    if delta < Duration::days(30) {
+        let days = delta.num_days();
+        return format!("{} days ago", days);
+    }
+    dt.format("%Y-%m-%d").to_string()
 }
 
 /// Factory function to create an appropriate formatter.

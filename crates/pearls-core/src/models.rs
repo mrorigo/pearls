@@ -22,7 +22,7 @@ pub enum Status {
 }
 
 /// Type of dependency relationship between Pearls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DepType {
     /// Blocking dependency - target must be closed before dependent can progress.

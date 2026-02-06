@@ -6,7 +6,7 @@
 //! generates a hash-based ID, and appends it to the JSONL file.
 
 use anyhow::Result;
-use pearls_core::{Pearl, Storage};
+use pearls_core::{Config, Pearl, Storage};
 use std::path::Path;
 
 /// Creates a new Pearl with the specified parameters.
@@ -33,6 +33,7 @@ use std::path::Path;
 pub fn execute(
     title: String,
     description: Option<String>,
+    description_file: Option<String>,
     priority: Option<u8>,
     labels: Vec<String>,
     author: Option<String>,
@@ -45,13 +46,23 @@ pub fn execute(
     }
 
     // Determine author
-    let author = author.or_else(get_default_author).unwrap_or_else(|| "unknown".to_string());
+    let author = author
+        .or_else(get_default_author)
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let config = Config::load(pearls_dir)?;
 
     // Create new Pearl
     let mut pearl = Pearl::new(title, author);
 
     // Apply optional fields
-    if let Some(desc) = description {
+    let mut provided_description = description;
+    if let Some(desc_path) = description_file {
+        provided_description = Some(read_description_from_path(&desc_path)?);
+    }
+
+    if let Some(desc) = provided_description {
+        enforce_description_limit(&desc)?;
         pearl.description = desc;
     }
 
@@ -60,17 +71,22 @@ pub fn execute(
             anyhow::bail!("Priority must be 0-4, got {}", p);
         }
         pearl.priority = p;
+    } else {
+        pearl.priority = config.default_priority;
     }
 
     if !labels.is_empty() {
-        pearl.labels = labels;
+        pearl.labels = labels.clone();
     }
 
     // Validate Pearl
     pearl.validate()?;
 
     // Save to storage
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    if !labels.is_empty() {
+        suggest_labels(&storage, &labels)?;
+    }
     storage.save(&pearl)?;
 
     println!("✓ Created Pearl: {}", pearl.id);
@@ -108,5 +124,57 @@ fn get_default_author() -> Option<String> {
     }
 
     // Fall back to system username
-    std::env::var("USER").ok().or_else(|| std::env::var("USERNAME").ok())
+    std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("USERNAME").ok())
+}
+
+fn read_description_from_path(path: &str) -> Result<String> {
+    if path == "-" {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        return Ok(buffer);
+    }
+
+    Ok(std::fs::read_to_string(path)?)
+}
+
+fn enforce_description_limit(description: &str) -> Result<()> {
+    const MAX_BYTES: usize = 64 * 1024;
+    if description.as_bytes().len() > MAX_BYTES {
+        anyhow::bail!("Description exceeds 64KB limit");
+    }
+    Ok(())
+}
+
+fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
+    let existing = storage.load_all().unwrap_or_default();
+    if existing.is_empty() {
+        return Ok(());
+    }
+    let existing_labels: Vec<String> = existing
+        .iter()
+        .flat_map(|pearl| pearl.labels.clone())
+        .collect();
+    if existing_labels.is_empty() {
+        return Ok(());
+    }
+    let lower_existing: std::collections::HashSet<String> = existing_labels
+        .iter()
+        .map(|label| label.to_lowercase())
+        .collect();
+    let mut missing = Vec::new();
+    for label in labels {
+        if !lower_existing.contains(&label.to_lowercase()) {
+            missing.push(label.clone());
+        }
+    }
+    if !missing.is_empty() {
+        eprintln!(
+            "Label suggestions: existing labels include {}",
+            existing_labels.join(", ")
+        );
+    }
+    Ok(())
 }

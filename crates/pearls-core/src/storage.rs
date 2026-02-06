@@ -9,6 +9,38 @@ use crate::{Error, Pearl, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+const INDEX_MAGIC: [u8; 8] = *b"PRLIDX1\0";
+const INDEX_VERSION: u8 = 1;
+
+fn invalid_index_error(message: &str) -> Error {
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message,
+    ))
+}
+
+fn read_u32<R: std::io::Read>(reader: &mut R) -> Result<u32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64<R: std::io::Read>(reader: &mut R) -> Result<u64> {
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+fn write_u32<W: std::io::Write>(writer: &mut W, value: u32) -> Result<()> {
+    writer.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
+fn write_u64<W: std::io::Write>(writer: &mut W, value: u64) -> Result<()> {
+    writer.write_all(&value.to_le_bytes())?;
+    Ok(())
+}
+
 /// Optional index for fast Pearl lookups by ID.
 ///
 /// Maps Pearl IDs to byte offsets in the JSONL file for O(log n) lookup performance.
@@ -35,6 +67,95 @@ impl Index {
             map: HashMap::new(),
             path,
         }
+    }
+
+    /// Loads an Index from disk, or returns an empty Index if the file does not exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the index file
+    ///
+    /// # Returns
+    ///
+    /// An Index populated from disk, or empty if the file is missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file exists but is invalid or unreadable.
+    pub fn load(path: PathBuf) -> Result<Self> {
+        use std::fs::File;
+        use std::io::Read;
+
+        if !path.exists() {
+            return Ok(Self::new(path));
+        }
+
+        let mut file = File::open(&path)?;
+
+        let mut magic = [0u8; 8];
+        file.read_exact(&mut magic)?;
+        if magic != INDEX_MAGIC {
+            return Err(invalid_index_error("Invalid index magic header"));
+        }
+
+        let mut version = [0u8; 1];
+        file.read_exact(&mut version)?;
+        if version[0] != INDEX_VERSION {
+            return Err(invalid_index_error("Unsupported index version"));
+        }
+
+        let count = read_u64(&mut file)?;
+        let mut map = HashMap::with_capacity(count as usize);
+
+        for _ in 0..count {
+            let id_len = read_u32(&mut file)? as usize;
+            if id_len == 0 {
+                return Err(invalid_index_error("Index entry has empty ID"));
+            }
+            let mut id_bytes = vec![0u8; id_len];
+            file.read_exact(&mut id_bytes)?;
+            let id = String::from_utf8(id_bytes)
+                .map_err(|_| invalid_index_error("Index entry has invalid UTF-8 ID"))?;
+            let offset = read_u64(&mut file)?;
+            map.insert(id, offset);
+        }
+
+        Ok(Self { map, path })
+    }
+
+    /// Writes the Index to disk using an atomic temp file + rename.
+    ///
+    /// # Returns
+    ///
+    /// Ok if the index was written successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written or renamed.
+    pub fn save(&self) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let temp_path = self.path.with_extension("bin.tmp");
+        let mut file = File::create(&temp_path)?;
+
+        file.write_all(&INDEX_MAGIC)?;
+        file.write_all(&[INDEX_VERSION])?;
+        write_u64(&mut file, self.map.len() as u64)?;
+
+        let mut entries: Vec<(&String, &u64)> = self.map.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (id, offset) in entries {
+            write_u32(&mut file, id.len() as u32)?;
+            file.write_all(id.as_bytes())?;
+            write_u64(&mut file, *offset)?;
+        }
+
+        file.sync_all()?;
+        std::fs::rename(&temp_path, &self.path)?;
+
+        Ok(())
     }
 
     /// Inserts a Pearl ID and its byte offset into the index.
@@ -69,6 +190,54 @@ impl Index {
         self.map.remove(id);
     }
 
+    /// Rebuilds the Index by scanning the JSONL file.
+    ///
+    /// # Arguments
+    ///
+    /// * `jsonl_path` - Path to the JSONL file
+    ///
+    /// # Returns
+    ///
+    /// Ok if the index was rebuilt successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the JSONL file cannot be read or contains invalid JSON.
+    pub fn rebuild(&mut self, jsonl_path: &Path) -> Result<()> {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        self.map.clear();
+
+        if !jsonl_path.exists() {
+            return Ok(());
+        }
+
+        let file = File::open(jsonl_path)?;
+        let mut reader = BufReader::new(file);
+        let mut offset: u64 = 0;
+
+        loop {
+            let mut line = String::new();
+            let bytes = reader.read_line(&mut line)?;
+            if bytes == 0 {
+                break;
+            }
+
+            let line_trimmed = line.trim_end_matches(['\n', '\r']);
+            if line_trimmed.is_empty() {
+                offset = offset.saturating_add(bytes as u64);
+                continue;
+            }
+
+            let pearl: Pearl = serde_json::from_str(line_trimmed)?;
+            self.map.insert(pearl.id, offset);
+            offset = offset.saturating_add(bytes as u64);
+        }
+
+        Ok(())
+    }
+
     /// Clears all entries from the index.
     pub fn clear(&mut self) {
         self.map.clear();
@@ -82,6 +251,11 @@ impl Index {
     /// Returns true if the index is empty.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// Returns an iterator over index entries.
+    pub fn entries(&self) -> impl Iterator<Item = (&String, &u64)> {
+        self.map.iter()
     }
 }
 
@@ -131,7 +305,36 @@ impl Storage {
     /// Returns an error if the path is invalid.
     pub fn with_index(path: PathBuf, index_path: Option<PathBuf>) -> Result<Self> {
         Self::validate_path(&path)?;
-        let index = index_path.map(Index::new);
+        let mut index = None;
+
+        if let Some(index_path) = index_path {
+            let index_exists = index_path.exists();
+            let mut needs_save = !index_exists;
+            let mut loaded = match Index::load(index_path.clone()) {
+                Ok(index) => index,
+                Err(err) => {
+                    if matches!(err, Error::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::InvalidData)
+                    {
+                        needs_save = true;
+                        Index::new(index_path.clone())
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+
+            if path.exists() && loaded.is_empty() {
+                loaded.rebuild(&path)?;
+                needs_save = true;
+            }
+
+            if needs_save {
+                loaded.save()?;
+            }
+
+            index = Some(loaded);
+        }
+
         Ok(Self { path, index })
     }
 
@@ -178,8 +381,14 @@ impl Storage {
     /// # Arguments
     ///
     /// * `index_path` - Path to the index file
-    pub fn enable_index(&mut self, index_path: PathBuf) {
-        self.index = Some(Index::new(index_path));
+    pub fn enable_index(&mut self, index_path: PathBuf) -> Result<()> {
+        let mut index = Index::new(index_path);
+        if self.path.exists() {
+            index.rebuild(&self.path)?;
+        }
+        index.save()?;
+        self.index = Some(index);
+        Ok(())
     }
 
     /// Disables indexing.
@@ -249,15 +458,26 @@ impl Storage {
     /// - The file cannot be opened
     /// - The Pearl is not found
     /// - The file contains invalid JSON
-    pub fn load_by_id(&self, id: &str) -> Result<Pearl> {
+    pub fn load_by_id(&mut self, id: &str) -> Result<Pearl> {
         use std::fs::File;
         use std::io::BufReader;
 
         // Check index first if available
-        if let Some(index) = &self.index {
-            if let Some(_offset) = index.get(id) {
-                // Index lookup would go here in a full implementation
-                // For now, we'll fall through to linear search
+        if let Some(index) = self.index.as_mut() {
+            if let Some(offset) = index.get(id) {
+                if let Ok(pearl) = Self::load_by_offset(&self.path, id, offset) {
+                    return Ok(pearl);
+                }
+
+                // Index appears out of sync; rebuild and retry once.
+                index.rebuild(&self.path)?;
+                index.save()?;
+
+                if let Some(rebuilt_offset) = index.get(id) {
+                    if let Ok(pearl) = Self::load_by_offset(&self.path, id, rebuilt_offset) {
+                        return Ok(pearl);
+                    }
+                }
             }
         }
 
@@ -286,6 +506,33 @@ impl Storage {
 
         Err(Error::NotFound(id.to_string()))
     }
+
+    fn load_by_offset(path: &Path, id: &str, offset: u64) -> Result<Pearl> {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader, Seek, SeekFrom};
+
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(offset))?;
+
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Err(Error::NotFound(id.to_string()));
+        }
+
+        let line_trimmed = line.trim_end_matches(['\n', '\r']);
+        if line_trimmed.is_empty() {
+            return Err(Error::NotFound(id.to_string()));
+        }
+
+        let pearl: Pearl = serde_json::from_str(line_trimmed)?;
+        if pearl.id != id {
+            return Err(Error::NotFound(id.to_string()));
+        }
+        pearl.validate()?;
+        Ok(pearl)
+    }
 }
 
 impl Storage {
@@ -308,7 +555,7 @@ impl Storage {
     /// - The Pearl fails validation
     /// - The file cannot be read or written
     /// - The atomic write operation fails
-    pub fn save(&self, pearl: &Pearl) -> Result<()> {
+    pub fn save(&mut self, pearl: &Pearl) -> Result<()> {
         pearl.validate()?;
 
         // Load all existing Pearls
@@ -323,11 +570,6 @@ impl Storage {
 
         // Write all Pearls atomically
         self.save_all(&pearls)?;
-
-        // Update index if enabled
-        if let Some(_index) = &self.index {
-            // Index update would go here in a full implementation
-        }
 
         Ok(())
     }
@@ -351,7 +593,7 @@ impl Storage {
     /// - Any Pearl fails validation
     /// - The file cannot be written
     /// - The atomic write operation fails
-    pub fn save_all(&self, pearls: &[Pearl]) -> Result<()> {
+    pub fn save_all(&mut self, pearls: &[Pearl]) -> Result<()> {
         use std::fs::File;
         use std::io::Write;
 
@@ -380,6 +622,12 @@ impl Storage {
         // Atomic rename
         std::fs::rename(&temp_path, &self.path)?;
 
+        // Update index if enabled
+        if let Some(index) = self.index.as_mut() {
+            index.rebuild(&self.path)?;
+            index.save()?;
+        }
+
         Ok(())
     }
 }
@@ -405,9 +653,9 @@ impl Storage {
     /// - The lock cannot be acquired within the timeout
     /// - The closure returns an error
     /// - The lock cannot be released
-    pub fn with_lock<F, T>(&self, f: F) -> Result<T>
+    pub fn with_lock<F, T>(&mut self, f: F) -> Result<T>
     where
-        F: FnOnce() -> Result<T>,
+        F: FnOnce(&mut Storage) -> Result<T>,
     {
         use fs2::FileExt;
         use std::fs::OpenOptions;
@@ -430,7 +678,7 @@ impl Storage {
         })?;
 
         // Execute the closure
-        let result = f();
+        let result = f(self);
 
         // Ensure lock is released (even if closure fails)
         let _ = lock_file.unlock();
@@ -458,7 +706,7 @@ impl Storage {
     /// Returns an error if:
     /// - The file cannot be read or written
     /// - The Pearl is not found
-    pub fn delete(&self, id: &str) -> Result<()> {
+    pub fn delete(&mut self, id: &str) -> Result<()> {
         // Load all Pearls
         let mut pearls = self.load_all()?;
 
@@ -473,11 +721,28 @@ impl Storage {
         // Write remaining Pearls
         self.save_all(&pearls)?;
 
-        // Update index if enabled
-        if let Some(_index) = &self.index {
-            // Index update would go here in a full implementation
-        }
-
         Ok(())
+    }
+
+    /// Rebuilds the index from the JSONL file if indexing is enabled.
+    ///
+    /// # Returns
+    ///
+    /// Ok if the index was rebuilt successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if indexing is disabled or the JSONL file cannot be read.
+    pub fn rebuild_index(&mut self) -> Result<()> {
+        if let Some(index) = self.index.as_mut() {
+            index.rebuild(&self.path)?;
+            index.save()?;
+            Ok(())
+        } else {
+            Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Indexing is not enabled",
+            )))
+        }
     }
 }

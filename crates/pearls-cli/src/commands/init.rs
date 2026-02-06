@@ -83,8 +83,29 @@ fn setup_git_integration() -> Result<()> {
         fs::write(gitattributes_path, gitattributes_content)?;
     }
 
-    // Install Git hooks (pre-commit, post-merge)
-    // This would typically copy hook scripts to .git/hooks/
+    install_hook(
+        ".git/hooks/pre-commit",
+        "cargo run -q -p pearls-hooks --bin pearls-pre-commit",
+    )?;
+    install_hook(
+        ".git/hooks/post-merge",
+        "cargo run -q -p pearls-hooks --bin pearls-post-merge",
+    )?;
+
+    Ok(())
+}
+
+fn install_hook(path: &str, command: &str) -> Result<()> {
+    let hook_content = format!("#!/bin/sh\n{}\n", command);
+    fs::write(path, hook_content)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms)?;
+    }
 
     Ok(())
 }

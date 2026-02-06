@@ -120,29 +120,29 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Test lock timeout scenarios
     - _Requirements: 17.3, 17.5_
 
-- [ ] 5. Implement optional index file for large repositories
-  - [ ] 5.1 Create Index struct with HashMap and file path
+- [x] 5. Implement optional index file for large repositories
+  - [x] 5.1 Create Index struct with HashMap and file path
     - Implement new() constructor
     - Add methods: insert(), get(), remove(), rebuild()
     - _Requirements: 10.6, 30.1, 30.2_
   
-  - [ ] 5.2 Implement index file serialization
+  - [x] 5.2 Implement index file serialization
     - Use binary format (bincode or custom)
     - Implement atomic updates alongside JSONL modifications
     - _Requirements: 10.7, 30.3_
   
-  - [ ] 5.3 Integrate index with Storage operations
+  - [x] 5.3 Integrate index with Storage operations
     - Modify load_by_id() to use index when available
     - Update index on save() and delete()
     - Add rebuild_index() method for corruption recovery
     - _Requirements: 30.4, 30.5_
   
-  - [ ] 5.4 Write property tests for index module
+  - [x] 5.4 Write property tests for index module
     - **Property 31: Index Consistency**
     - **Property 32: Index Lookup Correctness**
     - **Validates: Requirements 10.7, 30.2, 30.4**
 
-- [ ] 6. Checkpoint - Validate storage layer
+- [x] 6. Checkpoint - Validate storage layer
   - Ensure all storage tests pass
   - Verify JSONL files are human-readable
   - Test with sample data (create, read, update, delete)
@@ -233,7 +233,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Test complex dependency chains
     - _Requirements: 4.1, 6.6_
 
-- [ ] 9. Checkpoint - Validate core library
+- [x] 9. Checkpoint - Validate core library
   - Ensure all core module tests pass
   - Verify FSM and graph integration works correctly
   - Test end-to-end: create Pearls, add dependencies, check ready queue
@@ -374,36 +374,36 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Test ready queue ordering
     - _Requirements: 7.7, 7.8, 6.1, 6.2, 6.3, 6.4_
 
-- [ ] 15. Implement core CLI commands (Part 3: Dependencies)
-  - [ ] 15.1 Implement `prl link` command
+- [x] 15. Implement core CLI commands (Part 3: Dependencies)
+  - [x] 15.1 Implement `prl link` command
     - Parse from ID, to ID, and dependency type
     - Load both Pearls
     - Add dependency with cycle detection
     - Save updated Pearl
     - _Requirements: 7.9, 4.2, 4.4, 4.5_
   
-  - [ ] 15.2 Implement `prl unlink` command
+  - [x] 15.2 Implement `prl unlink` command
     - Parse from ID and to ID
     - Load Pearl and remove dependency
     - Save updated Pearl
     - _Requirements: 7.10, 4.2_
   
-  - [ ] 15.3 Write integration tests for dependency commands
+  - [x] 15.3 Write integration tests for dependency commands
     - Test link creates dependency
     - Test link detects cycles
     - Test unlink removes dependency
     - Test blocking dependency effects on FSM
     - _Requirements: 7.9, 7.10, 4.4, 4.5_
 
-- [ ] 16. Checkpoint - Validate core CLI functionality
+- [x] 16. Checkpoint - Validate core CLI functionality
   - Ensure all CLI command tests pass
   - Test full workflow: init → create → link → ready → close
   - Verify output formatting works correctly
   - Ask the user if questions arise
 
 
-- [ ] 17. Implement advanced CLI commands
-  - [ ] 17.1 Implement `prl status` command (Land the Plane protocol)
+- [x] 17. Implement advanced CLI commands
+  - [x] 17.1 Implement `prl status` command (Land the Plane protocol)
     - Check Git working directory status
     - Count open P0 (critical) Pearls
     - Check for unresolved blocking dependencies
@@ -411,7 +411,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Display checklist with completion status
     - _Requirements: 7.11, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7_
   
-  - [ ] 17.2 Implement `prl compact` command
+  - [x] 17.2 Implement `prl compact` command
     - Parse threshold from config or argument
     - Identify closed Pearls older than threshold
     - Move to archive.jsonl
@@ -420,7 +420,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Support --dry-run flag
     - _Requirements: 7.13, 14.1, 14.2, 14.3, 14.4, 14.6_
   
-  - [ ] 17.3 Implement `prl doctor` command
+  - [x] 17.3 Implement `prl doctor` command
     - Validate JSONL syntax
     - Validate Pearl schema compliance
     - Check for orphaned dependencies
@@ -430,7 +430,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Support --fix flag for auto-repair
     - _Requirements: 7.14, 20.1, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7_
   
-  - [ ] 17.4 Implement `prl import beads` command
+  - [x] 17.4 Implement `prl import beads` command
     - Parse Beads JSONL file
     - Validate and convert to Pearls format
     - Handle field mapping and incompatibilities
@@ -438,22 +438,22 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Provide migration summary report
     - _Requirements: 7.15, 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7_
   
-  - [ ] 17.5 Write integration tests for advanced commands
+  - [x] 17.5 Write integration tests for advanced commands
     - Test status checklist generation
     - Test compact with various thresholds
     - Test doctor detects all issue types
     - Test import from Beads format
     - _Requirements: 15.1-15.7, 14.1-14.6, 20.1-20.7, 16.1-16.7_
 
-- [ ] 18. Implement `prl sync` command with Git integration
-  - [ ] 18.1 Implement Git operations wrapper
+- [x] 18. Implement `prl sync` command with Git integration
+  - [x] 18.1 Implement Git operations wrapper
     - Use git2 crate for Git operations
     - Implement pull with rebase
     - Implement push with retry logic
     - Handle authentication and remote configuration
     - _Requirements: 7.12, 21.1, 21.4, 21.5_
   
-  - [ ] 18.2 Implement sync command logic
+  - [x] 18.2 Implement sync command logic
     - Execute git pull --rebase
     - Run integrity checks after merge
     - Execute git push if checks pass
@@ -461,7 +461,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Support --dry-run flag
     - _Requirements: 21.1, 21.2, 21.3, 21.4, 21.5, 21.6, 21.7_
   
-  - [ ] 18.3 Write integration tests for sync command
+  - [x] 18.3 Write integration tests for sync command
     - Test sync with clean working directory
     - Test sync with merge conflicts
     - Test sync retry logic
@@ -469,13 +469,13 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - _Requirements: 21.1-21.7_
 
 
-- [ ] 19. Implement Git merge driver (pearls-merge)
-  - [ ] 19.1 Create merge driver binary structure
+- [x] 19. Implement Git merge driver (pearls-merge)
+  - [x] 19.1 Create merge driver binary structure
     - Set up clap for argument parsing (ancestor, ours, theirs paths)
     - Create main entry point
     - _Requirements: 8.3_
   
-  - [ ] 19.2 Implement three-way merge algorithm
+  - [x] 19.2 Implement three-way merge algorithm
     - Parse all three JSONL files into HashMaps
     - Identify Pearls in each set: only_ours, only_theirs, both, unchanged
     - Implement field-level merge for Pearls in both
@@ -483,32 +483,32 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Union array fields (labels, deps) with deduplication
     - _Requirements: 8.4, 8.5, 8.6_
   
-  - [ ] 19.3 Implement conflict detection and marking
+  - [x] 19.3 Implement conflict detection and marking
     - Detect unresolvable conflicts (same field, same timestamp, different values)
     - Mark conflicts in output or return error
     - _Requirements: 8.8_
   
-  - [ ] 19.4 Implement merge output generation
+  - [x] 19.4 Implement merge output generation
     - Combine all Pearls and sort by ID
     - Serialize to valid JSONL
     - Write to output file
     - _Requirements: 8.7_
   
-  - [ ] 19.5 Write property tests for merge driver
+  - [x] 19.5 Write property tests for merge driver
     - **Property 22: Three-Way Merge Validity**
     - **Property 23: Field-Level Merge Preservation**
     - **Property 24: List Field Union**
     - **Validates: Requirements 8.4, 8.5, 8.6, 8.7**
   
-  - [ ] 19.6 Write unit tests for merge scenarios
+  - [x] 19.6 Write unit tests for merge scenarios
     - Test merge with no conflicts
     - Test merge with field-level conflicts
     - Test merge with list field conflicts
     - Test merge with unresolvable conflicts
     - _Requirements: 8.4, 8.5, 8.6, 8.8_
 
-- [ ] 20. Implement Git hooks (pearls-hooks)
-  - [ ] 20.1 Implement pre-commit hook
+- [x] 20. Implement Git hooks (pearls-hooks)
+  - [x] 20.1 Implement pre-commit hook
     - Validate JSONL syntax
     - Validate Pearl schema compliance
     - Check for duplicate IDs
@@ -516,19 +516,19 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - Auto-close referenced Pearls if pattern found
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
   
-  - [ ] 20.2 Implement post-merge hook
+  - [x] 20.2 Implement post-merge hook
     - Run integrity checks on dependency graph
     - Detect and report cycles
     - Detect and report orphaned dependencies
     - _Requirements: 9.5, 9.6, 9.7_
   
-  - [ ] 20.3 Implement hook installation in init command
+  - [x] 20.3 Implement hook installation in init command
     - Copy hook scripts to .git/hooks/
     - Make hooks executable
     - Configure Git to use hooks
     - _Requirements: 9.1, 9.5_
   
-  - [ ] 20.4 Write integration tests for Git hooks
+  - [x] 20.4 Write integration tests for Git hooks
     - Test pre-commit validation
     - Test auto-close on commit message
     - Test post-merge integrity checks
@@ -541,62 +541,62 @@ The project uses a multi-crate workspace structure for separation of concerns:
   - Ask the user if questions arise
 
 
-- [ ] 22. Implement label and priority features
-  - [ ] 22.1 Add label filtering to list command
+- [x] 22. Implement label and priority features
+  - [x] 22.1 Add label filtering to list command
     - Parse --label flag
     - Filter Pearls by label (case-insensitive matching)
     - Support multiple label filters
     - _Requirements: 22.3, 22.6_
   
-  - [ ] 22.2 Add label autocomplete suggestions
+  - [x] 22.2 Add label autocomplete suggestions
     - Collect all unique labels from existing Pearls
     - Provide suggestions when creating/updating Pearls
     - _Requirements: 22.4_
   
-  - [ ] 22.3 Add priority display and filtering
+  - [x] 22.3 Add priority display and filtering
     - Format priority as P0, P1, P2, P3, P4
     - Add --priority flag to list command
     - Ensure ready queue sorts by priority correctly
     - _Requirements: 23.4, 23.5_
   
-  - [ ] 22.4 Write property tests for label and priority
+  - [x] 22.4 Write property tests for label and priority
     - **Property 35: Label Case Preservation**
     - **Property 36: Priority Range Validation**
     - **Property 37: Priority Default**
     - **Validates: Requirements 22.6, 23.1, 23.2**
   
-  - [ ] 22.5 Write unit tests for label and priority features
+  - [x] 22.5 Write unit tests for label and priority features
     - Test label filtering
     - Test label case-insensitivity
     - Test priority formatting
     - Test priority sorting
     - _Requirements: 22.1-22.6, 23.1-23.5_
 
-- [ ] 23. Implement description and metadata features
-  - [ ] 23.1 Add description support to create and update commands
+- [x] 23. Implement description and metadata features
+  - [x] 23.1 Add description support to create and update commands
     - Accept --description flag or read from stdin
     - Support multi-line Markdown descriptions
     - Validate description length (max 64KB)
     - _Requirements: 24.1, 24.3, 24.5_
   
-  - [ ] 23.2 Add description display to show command
+  - [x] 23.2 Add description display to show command
     - Format Markdown for terminal display
     - Preserve formatting and newlines
     - _Requirements: 24.2_
   
-  - [ ] 23.3 Add metadata read/write commands
+  - [x] 23.3 Add metadata read/write commands
     - Implement `prl meta get <id> <key>` command
     - Implement `prl meta set <id> <key> <value>` command
     - Support JSON values for metadata
     - _Requirements: 19.1, 19.3, 19.5_
   
-  - [ ] 23.4 Write property tests for description and metadata
+  - [x] 23.4 Write property tests for description and metadata
     - **Property 33: Metadata Preservation**
     - **Property 34: Unknown Field Tolerance**
     - **Property 38: Markdown Preservation**
     - **Validates: Requirements 2.10, 19.2, 19.3, 24.2, 24.3**
   
-  - [ ] 23.5 Write unit tests for description and metadata
+  - [x] 23.5 Write unit tests for description and metadata
     - Test multi-line description handling
     - Test Markdown preservation
     - Test metadata get/set operations
@@ -737,4 +737,3 @@ The project uses a multi-crate workspace structure for separation of concerns:
 - Unit tests validate specific examples and edge cases
 - The implementation follows a bottom-up approach: core library first, then CLI, then Git integration
 - Multi-crate structure enables better separation of concerns and testing
-

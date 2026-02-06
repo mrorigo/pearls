@@ -35,7 +35,7 @@ pub fn execute(id: String) -> Result<()> {
     }
 
     // Load all Pearls to resolve partial ID and build graph
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
     let all_pearls = storage.load_all()?;
 
     // Resolve partial ID
@@ -53,9 +53,7 @@ pub fn execute(id: String) -> Result<()> {
     // Update status and timestamp
     pearl.status = Status::Closed;
     use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs() as i64;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
     pearl.updated_at = now;
 
     // Validate Pearl

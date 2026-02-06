@@ -5,8 +5,8 @@
 //! Displays detailed information about a specific Pearl,
 //! supporting both full and partial ID resolution.
 
-use anyhow::Result;
 use crate::OutputFormatter;
+use anyhow::Result;
 use pearls_core::{identity, Storage};
 use std::path::Path;
 
@@ -32,11 +32,7 @@ use std::path::Path;
 /// - The Pearl ID is not found
 /// - The Pearl ID is ambiguous (matches multiple Pearls)
 /// - The file cannot be read
-pub fn execute(
-    id: String,
-    include_archived: bool,
-    formatter: &dyn OutputFormatter,
-) -> Result<()> {
+pub fn execute(id: String, include_archived: bool, formatter: &dyn OutputFormatter) -> Result<()> {
     let pearls_dir = Path::new(".pearls");
 
     // Verify .pearls directory exists
@@ -44,7 +40,7 @@ pub fn execute(
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
 
     // Try to resolve partial ID
     let full_id = resolve_id(&id, &storage, include_archived)?;
@@ -53,9 +49,29 @@ pub fn execute(
     let pearl = storage.load_by_id(&full_id)?;
 
     // Display the Pearl
-    println!("{}", formatter.format_pearl(&pearl));
+    let mut output = formatter.format_pearl(&pearl);
+    if !pearl.deps.is_empty() {
+        output.push_str("\nDependencies:\n");
+        for dep in &pearl.deps {
+            output.push_str(&format!(
+                "  - {} ({})\n",
+                dep.target_id,
+                format_dep_type(dep.dep_type)
+            ));
+        }
+    }
+    println!("{}", output);
 
     Ok(())
+}
+
+fn format_dep_type(dep_type: pearls_core::DepType) -> &'static str {
+    match dep_type {
+        pearls_core::DepType::Blocks => "blocks",
+        pearls_core::DepType::ParentChild => "parent_child",
+        pearls_core::DepType::Related => "related",
+        pearls_core::DepType::DiscoveredFrom => "discovered_from",
+    }
 }
 
 /// Resolves a partial or full Pearl ID.

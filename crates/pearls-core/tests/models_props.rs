@@ -195,6 +195,88 @@ proptest! {
         prop_assert!(deserialized.deps.is_empty(), "Default deps should be empty");
         prop_assert!(deserialized.metadata.is_empty(), "Default metadata should be empty");
     }
+
+    /// **Property 35: Label Case Preservation**
+    ///
+    /// **Validates: Requirements 22.6**
+    #[test]
+    fn test_label_case_preservation(label in prop::string::string_regex("[A-Za-z]{1,10}").unwrap()) {
+        let pearl = Pearl {
+            id: "prl-abc123".to_string(),
+            title: "Title".to_string(),
+            description: String::new(),
+            status: Status::Open,
+            priority: 2,
+            created_at: 1000,
+            updated_at: 1000,
+            author: "author".to_string(),
+            labels: vec![label.clone()],
+            deps: Vec::new(),
+            metadata: Default::default(),
+        };
+        let json = serde_json::to_string(&pearl).expect("Serialization failed");
+        let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
+        prop_assert_eq!(&deserialized.labels[0], &label);
+    }
+
+    /// **Property 38: Markdown Preservation**
+    ///
+    /// **Validates: Requirements 24.2, 24.3**
+    #[test]
+    fn test_markdown_preservation(desc in prop::string::string_regex("(?s)[A-Za-z0-9\\n\\*# ]{1,100}").unwrap()) {
+        let pearl = Pearl {
+            id: "prl-abc123".to_string(),
+            title: "Title".to_string(),
+            description: desc.clone(),
+            status: Status::Open,
+            priority: 2,
+            created_at: 1000,
+            updated_at: 1000,
+            author: "author".to_string(),
+            labels: Vec::new(),
+            deps: Vec::new(),
+            metadata: Default::default(),
+        };
+        let json = serde_json::to_string(&pearl).expect("Serialization failed");
+        let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
+        prop_assert_eq!(deserialized.description, desc);
+    }
+}
+
+#[test]
+fn test_priority_default_is_medium() {
+    let pearl = Pearl::new("Test".to_string(), "author".to_string());
+    assert_eq!(pearl.priority, 2);
+}
+
+#[test]
+fn test_unknown_field_tolerance() {
+    let json = serde_json::json!({
+        "id": "prl-abc123",
+        "title": "Test",
+        "status": "open",
+        "created_at": 1000,
+        "updated_at": 1000,
+        "author": "author",
+        "extra_field": "ignored"
+    });
+    let pearl: Pearl = serde_json::from_value(json).expect("Should ignore unknown fields");
+    assert_eq!(pearl.title, "Test");
+}
+
+#[test]
+fn test_metadata_preservation() {
+    let mut pearl = Pearl::new("Meta".to_string(), "author".to_string());
+    pearl.metadata.insert(
+        "key".to_string(),
+        serde_json::Value::String("value".to_string()),
+    );
+    let json = serde_json::to_string(&pearl).expect("Serialization failed");
+    let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
+    assert_eq!(
+        deserialized.metadata.get("key"),
+        Some(&serde_json::Value::String("value".to_string()))
+    );
 }
 
 /// **Property 3: Multi-Pearl Separation**

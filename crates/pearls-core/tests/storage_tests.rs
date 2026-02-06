@@ -62,7 +62,7 @@ fn test_concurrent_read_operations() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path.clone()).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path.clone()).expect("Failed to create storage");
 
     // Create test data
     let pearl1 = create_test_pearl("prl-111111", "Pearl 1");
@@ -87,10 +87,10 @@ fn test_lock_timeout_scenarios() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
 
     // Test that lock can be acquired and released
-    let result = storage.with_lock(|| {
+    let result = storage.with_lock(|storage| {
         let pearl = create_test_pearl("prl-111111", "Test Pearl");
         storage.save(&pearl)
     });
@@ -98,7 +98,7 @@ fn test_lock_timeout_scenarios() {
     assert!(result.is_ok(), "Lock operation should succeed");
 
     // Test that lock can be acquired again after release
-    let result2 = storage.with_lock(|| storage.load_all());
+    let result2 = storage.with_lock(|storage| storage.load_all());
 
     assert!(result2.is_ok(), "Lock should be released and reacquirable");
 }
@@ -108,7 +108,7 @@ fn test_save_single_pearl() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
     let pearl = create_test_pearl("prl-111111", "Test Pearl");
 
     storage.save(&pearl).expect("Failed to save pearl");
@@ -125,7 +125,7 @@ fn test_update_existing_pearl() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
     let mut pearl = create_test_pearl("prl-111111", "Original Title");
 
     storage.save(&pearl).expect("Failed to save pearl");
@@ -149,7 +149,7 @@ fn test_delete_pearl() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
     let pearl1 = create_test_pearl("prl-111111", "Pearl 1");
     let pearl2 = create_test_pearl("prl-222222", "Pearl 2");
 
@@ -178,7 +178,7 @@ fn test_delete_nonexistent_pearl() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
 
     // Try to delete a pearl that doesn't exist
     let result = storage.delete("prl-nonexistent");
@@ -190,7 +190,7 @@ fn test_load_by_id_early_termination() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
 
     // Create many pearls
     let mut pearls = Vec::new();
@@ -214,7 +214,7 @@ fn test_save_all_replaces_file() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
 
     // Save initial pearls
     let pearl1 = create_test_pearl("prl-111111", "Pearl 1");
@@ -238,7 +238,7 @@ fn test_jsonl_format_validation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let storage_path = temp_dir.path().join("test.jsonl");
 
-    let storage = Storage::new(storage_path.clone()).expect("Failed to create storage");
+    let mut storage = Storage::new(storage_path.clone()).expect("Failed to create storage");
 
     let pearl1 = create_test_pearl("prl-111111", "Pearl 1");
     let pearl2 = create_test_pearl("prl-222222", "Pearl 2");
@@ -272,7 +272,7 @@ fn test_storage_with_index() {
     let storage_path = temp_dir.path().join("test.jsonl");
     let index_path = temp_dir.path().join("test.idx");
 
-    let storage = Storage::with_index(storage_path, Some(index_path))
+    let mut storage = Storage::with_index(storage_path, Some(index_path))
         .expect("Failed to create storage with index");
 
     let pearl = create_test_pearl("prl-111111", "Test Pearl");

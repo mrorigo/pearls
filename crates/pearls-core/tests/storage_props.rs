@@ -103,7 +103,7 @@ proptest! {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_path = temp_dir.path().join("test.jsonl");
 
-        let storage = pearls_core::storage::Storage::new(storage_path.clone())
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
             .expect("Failed to create storage");
 
         storage.save(&pearl).expect("Failed to save pearl");
@@ -123,7 +123,7 @@ proptest! {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_path = temp_dir.path().join("test.jsonl");
 
-        let storage = pearls_core::storage::Storage::new(storage_path.clone())
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
             .expect("Failed to create storage");
 
         storage.save_all(&pearls).expect("Failed to save pearls");
@@ -152,7 +152,7 @@ proptest! {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_path = temp_dir.path().join("test.jsonl");
 
-        let storage = pearls_core::storage::Storage::new(storage_path.clone())
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
             .expect("Failed to create storage");
 
         // Save pearls
@@ -181,20 +181,16 @@ proptest! {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_path = temp_dir.path().join("test.jsonl");
 
-        let storage = pearls_core::storage::Storage::new(storage_path.clone())
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
             .expect("Failed to create storage");
 
         // Execute with lock
-        let result = storage.with_lock(|| {
-            storage.save(&pearl)
-        });
+        let result = storage.with_lock(|storage| storage.save(&pearl));
 
         prop_assert!(result.is_ok(), "Lock operation should succeed");
 
         // Verify lock is released by attempting another operation
-        let result2 = storage.with_lock(|| {
-            storage.load_by_id(&pearl.id)
-        });
+        let result2 = storage.with_lock(|storage| storage.load_by_id(&pearl.id));
 
         prop_assert!(result2.is_ok(), "Lock should be released after first operation");
     }
@@ -215,7 +211,7 @@ fn test_concurrent_write_serialization() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let storage_path = temp_dir.path().join("test.jsonl");
 
-        let storage = pearls_core::storage::Storage::new(storage_path.clone())
+        let mut storage = pearls_core::storage::Storage::new(storage_path.clone())
             .expect("Failed to create storage");
 
         // Save first pearl

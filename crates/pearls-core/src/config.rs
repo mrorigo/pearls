@@ -227,7 +227,10 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn clear_all_env_vars() {
         std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
@@ -237,212 +240,199 @@ mod tests {
         std::env::remove_var("PEARLS_AUTO_CLOSE_ON_COMMIT");
     }
 
+    fn run_env_test<F: FnOnce()>(f: F) {
+        let _guard = ENV_LOCK.lock().expect("Failed to lock env mutex");
+        clear_all_env_vars();
+        f();
+        clear_all_env_vars();
+    }
+
     #[test]
     fn test_default_config() {
-        let config = Config::default();
-        assert_eq!(config.default_priority, 2);
-        assert_eq!(config.compact_threshold_days, 30);
-        assert!(!config.use_index);
-        assert_eq!(config.output_format, OutputFormat::Table);
-        assert!(!config.auto_close_on_commit);
+        run_env_test(|| {
+            let config = Config::default();
+            assert_eq!(config.default_priority, 2);
+            assert_eq!(config.compact_threshold_days, 30);
+            assert!(!config.use_index);
+            assert_eq!(config.output_format, OutputFormat::Table);
+            assert!(!config.auto_close_on_commit);
+        });
     }
 
     #[test]
     fn test_config_load_missing_file() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.default_priority, 2);
-        assert_eq!(config.compact_threshold_days, 30);
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.default_priority, 2);
+            assert_eq!(config.compact_threshold_days, 30);
+        });
     }
 
     #[test]
     fn test_config_load_from_file() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let content = r#"
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = r#"
 default_priority = 1
 compact_threshold_days = 60
 use_index = true
 output_format = "json"
 auto_close_on_commit = true
 "#;
-        std::fs::write(&config_path, content).unwrap();
+            std::fs::write(&config_path, content).unwrap();
 
-        // Clear any environment variables that might interfere
-        std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
-        std::env::remove_var("PEARLS_COMPACT_THRESHOLD_DAYS");
-        std::env::remove_var("PEARLS_USE_INDEX");
-        std::env::remove_var("PEARLS_OUTPUT_FORMAT");
-        std::env::remove_var("PEARLS_AUTO_CLOSE_ON_COMMIT");
-
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.default_priority, 1);
-        assert_eq!(config.compact_threshold_days, 60);
-        assert!(config.use_index);
-        assert_eq!(config.output_format, OutputFormat::Json);
-        assert!(config.auto_close_on_commit);
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.default_priority, 1);
+            assert_eq!(config.compact_threshold_days, 60);
+            assert!(config.use_index);
+            assert_eq!(config.output_format, OutputFormat::Json);
+            assert!(config.auto_close_on_commit);
+        });
     }
 
     #[test]
     fn test_config_validation_invalid_priority() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let content = "default_priority = 5";
-        std::fs::write(&config_path, content).unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = "default_priority = 5";
+            std::fs::write(&config_path, content).unwrap();
 
-        // Clear environment variables
-        std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
-        std::env::remove_var("PEARLS_COMPACT_THRESHOLD_DAYS");
-        std::env::remove_var("PEARLS_USE_INDEX");
-        std::env::remove_var("PEARLS_OUTPUT_FORMAT");
-        std::env::remove_var("PEARLS_AUTO_CLOSE_ON_COMMIT");
-
-        let result = Config::load(temp_dir.path());
-        assert!(result.is_err());
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_config_validation_zero_threshold() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let content = "compact_threshold_days = 0";
-        std::fs::write(&config_path, content).unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = "compact_threshold_days = 0";
+            std::fs::write(&config_path, content).unwrap();
 
-        // Clear environment variables
-        std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
-        std::env::remove_var("PEARLS_COMPACT_THRESHOLD_DAYS");
-        std::env::remove_var("PEARLS_USE_INDEX");
-        std::env::remove_var("PEARLS_OUTPUT_FORMAT");
-        std::env::remove_var("PEARLS_AUTO_CLOSE_ON_COMMIT");
-
-        let result = Config::load(temp_dir.path());
-        assert!(result.is_err());
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_config_env_override_priority() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_DEFAULT_PRIORITY", "3");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.default_priority, 3);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_DEFAULT_PRIORITY", "3");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.default_priority, 3);
+        });
     }
 
     #[test]
     fn test_config_env_override_threshold() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_COMPACT_THRESHOLD_DAYS", "90");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.compact_threshold_days, 90);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_COMPACT_THRESHOLD_DAYS", "90");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.compact_threshold_days, 90);
+        });
     }
 
     #[test]
     fn test_config_env_override_use_index() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_USE_INDEX", "true");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert!(config.use_index);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_USE_INDEX", "true");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert!(config.use_index);
+        });
     }
 
     #[test]
     fn test_config_env_override_output_format() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_OUTPUT_FORMAT", "plain");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.output_format, OutputFormat::Plain);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_OUTPUT_FORMAT", "plain");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.output_format, OutputFormat::Plain);
+        });
     }
 
     #[test]
     fn test_config_env_override_auto_close() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_AUTO_CLOSE_ON_COMMIT", "true");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert!(config.auto_close_on_commit);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_AUTO_CLOSE_ON_COMMIT", "true");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert!(config.auto_close_on_commit);
+        });
     }
 
     #[test]
     fn test_config_env_invalid_priority() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_DEFAULT_PRIORITY", "invalid");
-        let result = Config::load(temp_dir.path());
-        assert!(result.is_err());
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_DEFAULT_PRIORITY", "invalid");
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_config_env_invalid_format() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("PEARLS_OUTPUT_FORMAT", "invalid");
-        let result = Config::load(temp_dir.path());
-        assert!(result.is_err());
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_OUTPUT_FORMAT", "invalid");
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
     }
 
     #[test]
     fn test_config_save_and_load() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
 
-        let original = Config {
-            default_priority: 1,
-            compact_threshold_days: 45,
-            use_index: true,
-            output_format: OutputFormat::Json,
-            auto_close_on_commit: true,
-        };
+            let original = Config {
+                default_priority: 1,
+                compact_threshold_days: 45,
+                use_index: true,
+                output_format: OutputFormat::Json,
+                auto_close_on_commit: true,
+            };
 
-        original.save(temp_dir.path()).unwrap();
-        let loaded = Config::load(temp_dir.path()).unwrap();
+            original.save(temp_dir.path()).unwrap();
+            let loaded = Config::load(temp_dir.path()).unwrap();
 
-        assert_eq!(original.default_priority, loaded.default_priority);
-        assert_eq!(
-            original.compact_threshold_days,
-            loaded.compact_threshold_days
-        );
-        assert_eq!(original.use_index, loaded.use_index);
-        assert_eq!(original.output_format, loaded.output_format);
-        assert_eq!(original.auto_close_on_commit, loaded.auto_close_on_commit);
-
-        clear_all_env_vars();
+            assert_eq!(original.default_priority, loaded.default_priority);
+            assert_eq!(
+                original.compact_threshold_days,
+                loaded.compact_threshold_days
+            );
+            assert_eq!(original.use_index, loaded.use_index);
+            assert_eq!(original.output_format, loaded.output_format);
+            assert_eq!(original.auto_close_on_commit, loaded.auto_close_on_commit);
+        });
     }
 
     #[test]
     fn test_config_file_overridden_by_env() {
-        clear_all_env_vars();
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("config.toml");
-        let content = "default_priority = 1";
-        std::fs::write(&config_path, content).unwrap();
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = "default_priority = 1";
+            std::fs::write(&config_path, content).unwrap();
 
-        std::env::set_var("PEARLS_DEFAULT_PRIORITY", "3");
-        let config = Config::load(temp_dir.path()).unwrap();
-        assert_eq!(config.default_priority, 3);
-
-        clear_all_env_vars();
+            std::env::set_var("PEARLS_DEFAULT_PRIORITY", "3");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.default_priority, 3);
+        });
     }
 }

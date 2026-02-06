@@ -13,3 +13,6 @@ path = "src/lib.rs"
 [dependencies]
 pearls-core = { path = "../pearls-core" }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

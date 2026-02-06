@@ -59,12 +59,16 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
+        /// Description from file ('-' for stdin)
+        #[arg(long)]
+        description_file: Option<String>,
+
         /// Priority level (0-4, default 2)
         #[arg(long)]
         priority: Option<u8>,
 
         /// Labels to assign
-        #[arg(long)]
+        #[arg(long, value_delimiter = ',')]
         label: Vec<String>,
 
         /// Author of the Pearl
@@ -93,12 +97,28 @@ enum Commands {
         priority: Option<u8>,
 
         /// Filter by label
-        #[arg(long)]
+        #[arg(long, value_delimiter = ',')]
         label: Vec<String>,
 
         /// Filter by author
         #[arg(long)]
         author: Option<String>,
+
+        /// Filter by created_at >= timestamp
+        #[arg(long)]
+        created_after: Option<i64>,
+
+        /// Filter by created_at <= timestamp
+        #[arg(long)]
+        created_before: Option<i64>,
+
+        /// Filter by updated_at >= timestamp
+        #[arg(long)]
+        updated_after: Option<i64>,
+
+        /// Filter by updated_at <= timestamp
+        #[arg(long)]
+        updated_before: Option<i64>,
 
         /// Include archived Pearls
         #[arg(long)]
@@ -107,6 +127,10 @@ enum Commands {
         /// Sort by field
         #[arg(long)]
         sort: Option<String>,
+
+        /// Filter by dependency type
+        #[arg(long, value_parser = ["blocks", "parent_child", "related", "discovered_from"])]
+        dep_type: Option<String>,
     },
 
     /// Show ready queue
@@ -129,6 +153,10 @@ enum Commands {
         #[arg(long)]
         description: Option<String>,
 
+        /// New description from file ('-' for stdin)
+        #[arg(long)]
+        description_file: Option<String>,
+
         /// New priority
         #[arg(long)]
         priority: Option<u8>,
@@ -138,11 +166,11 @@ enum Commands {
         status: Option<String>,
 
         /// Add labels
-        #[arg(long)]
+        #[arg(long, value_delimiter = ',')]
         add_label: Vec<String>,
 
         /// Remove labels
-        #[arg(long)]
+        #[arg(long, value_delimiter = ',')]
         remove_label: Vec<String>,
     },
 
@@ -272,11 +300,19 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Create {
             title,
             description,
+            description_file,
             priority,
             label,
             author,
         }) => {
-            commands::create::execute(title, description, priority, label, author)?;
+            commands::create::execute(
+                title,
+                description,
+                description_file,
+                priority,
+                label,
+                author,
+            )?;
         }
         Some(Commands::Show {
             id,
@@ -289,8 +325,13 @@ fn main() -> anyhow::Result<()> {
             priority,
             label,
             author,
+            created_after,
+            created_before,
+            updated_after,
+            updated_before,
             include_archived,
             sort,
+            dep_type,
         }) => {
             commands::list::execute(
                 status,
@@ -299,6 +340,11 @@ fn main() -> anyhow::Result<()> {
                 author,
                 include_archived,
                 sort,
+                dep_type,
+                created_after,
+                created_before,
+                updated_after,
+                updated_before,
                 formatter.as_ref(),
             )?;
         }
@@ -309,63 +355,58 @@ fn main() -> anyhow::Result<()> {
             id,
             title,
             description,
+            description_file,
             priority,
             status,
             add_label,
             remove_label,
         }) => {
-            commands::update::execute(id, title, description, priority, status, add_label, remove_label)?;
+            commands::update::execute(
+                id,
+                title,
+                description,
+                description_file,
+                priority,
+                status,
+                add_label,
+                remove_label,
+            )?;
         }
         Some(Commands::Close { id }) => {
             commands::close::execute(id)?;
         }
         Some(Commands::Link { from, to, dep_type }) => {
-            println!("Linking {} -> {} ({})", from, to, dep_type);
+            commands::link::execute(from, to, dep_type)?;
         }
         Some(Commands::Unlink { from, to }) => {
-            println!("Unlinking {} -> {}", from, to);
+            commands::unlink::execute(from, to)?;
         }
         Some(Commands::Status { detailed }) => {
-            println!("Checking project status...");
-            if detailed {
-                println!("  (detailed checklist)");
-            }
+            commands::status::execute(detailed)?;
         }
         Some(Commands::Sync { dry_run }) => {
-            println!("Syncing with remote...");
-            if dry_run {
-                println!("  (dry-run mode)");
-            }
+            commands::sync::execute(dry_run)?;
         }
         Some(Commands::Compact {
             threshold_days,
             dry_run,
         }) => {
-            println!("Compacting old Pearls...");
-            if let Some(t) = threshold_days {
-                println!("  Threshold: {} days", t);
-            }
-            if dry_run {
-                println!("  (dry-run mode)");
-            }
+            commands::compact::execute(threshold_days, dry_run)?;
         }
         Some(Commands::Doctor { fix }) => {
-            println!("Running integrity checks...");
-            if fix {
-                println!("  (auto-fix mode)");
-            }
+            commands::doctor::execute(fix)?;
         }
         Some(Commands::Import { source }) => match source {
             ImportSource::Beads { path } => {
-                println!("Importing from Beads: {}", path);
+                commands::import::import_beads(path)?;
             }
         },
         Some(Commands::Meta { action }) => match action {
             MetaAction::Get { id, key } => {
-                println!("Getting metadata: {} -> {}", id, key);
+                commands::meta::get(id, key)?;
             }
             MetaAction::Set { id, key, value } => {
-                println!("Setting metadata: {} -> {} = {}", id, key, value);
+                commands::meta::set(id, key, value)?;
             }
         },
         None => {
