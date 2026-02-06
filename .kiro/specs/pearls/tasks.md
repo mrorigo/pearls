@@ -12,36 +12,36 @@ The project uses a multi-crate workspace structure for separation of concerns:
 
 ## Tasks
 
-- [ ] 1. Set up workspace and project structure
+- [X] 1. Set up workspace and project structure
   - Create Cargo workspace with four crates: pearls-core, pearls-cli, pearls-merge, pearls-hooks
   - Configure dependencies: serde, serde_json, clap, git2, petgraph, sha2, thiserror, anyhow, proptest, tabled, rayon
   - Set up .gitignore for Rust projects
   - Create basic module structure in each crate
   - _Requirements: All (foundational)_
 
-- [ ] 2. Implement core data models in pearls-core
-  - [ ] 2.1 Define Pearl struct with all fields and serde attributes
+- [x] 2. Implement core data models in pearls-core
+  - [x] 2.1 Define Pearl struct with all fields and serde attributes
     - Implement mandatory fields: id, title, status, created_at, updated_at, author
     - Implement optional fields: description, priority, labels, deps, metadata
     - Add serde derives and default value functions
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9_
   
-  - [ ] 2.2 Define Status enum with FSM states
+  - [x] 2.2 Define Status enum with FSM states
     - Implement enum variants: Open, InProgress, Blocked, Deferred, Closed
     - Add serde rename_all attribute for snake_case
     - _Requirements: 2.5, 5.1_
   
-  - [ ] 2.3 Define Dependency and DepType structures
+  - [x] 2.3 Define Dependency and DepType structures
     - Implement Dependency struct with target_id and dep_type fields
     - Implement DepType enum: Blocks, ParentChild, Related, DiscoveredFrom
     - _Requirements: 2.8, 4.2, 27.1-27.4_
   
-  - [ ] 2.4 Implement Pearl validation methods
+  - [x] 2.4 Implement Pearl validation methods
     - Add validate() method checking mandatory fields, priority range, ID format
     - Add new() constructor with sensible defaults
     - _Requirements: 2.1, 2.6, 2.3_
   
-  - [ ] 2.5 Write property tests for data models
+  - [x] 2.5 Write property tests for data models
     - **Property 1: JSONL Round-Trip Preservation**
     - **Property 2: Single-Line Serialization**
     - **Property 4: Mandatory Field Presence**
@@ -49,24 +49,24 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - **Property 6: Optional Field Flexibility**
     - **Validates: Requirements 1.2, 1.3, 1.7, 2.1, 2.2, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9**
 
-- [ ] 3. Implement identity module in pearls-core
-  - [ ] 3.1 Implement hash-based ID generation
+- [x] 3. Implement identity module in pearls-core
+  - [x] 3.1 Implement hash-based ID generation
     - Create generate_id() function using SHA-256 of (title, author, timestamp, nonce)
     - Truncate hash to 6-8 hex characters and prefix with "prl-"
     - Implement collision detection with nonce increment
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
   
-  - [ ] 3.2 Implement partial ID resolution
+  - [x] 3.2 Implement partial ID resolution
     - Create resolve_partial_id() function with prefix matching
     - Handle unique matches, ambiguous matches, and no matches
     - Require minimum 3 characters for partial IDs
     - _Requirements: 3.6, 3.7, 28.1-28.5_
   
-  - [ ] 3.3 Implement ID validation
+  - [x] 3.3 Implement ID validation
     - Create validate_id_format() function with regex matching
     - _Requirements: 2.3_
   
-  - [ ] 3.4 Write property tests for identity module
+  - [x] 3.4 Write property tests for identity module
     - **Property 7: ID Format Consistency**
     - **Property 8: ID Generation Determinism**
     - **Property 9: Partial ID Resolution Uniqueness**
@@ -74,38 +74,38 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - **Validates: Requirements 2.3, 3.1, 3.2, 3.3, 3.6, 3.7**
 
 
-- [ ] 4. Implement storage module in pearls-core
-  - [ ] 4.1 Create Storage struct with file path and optional index
+- [x] 4. Implement storage module in pearls-core
+  - [x] 4.1 Create Storage struct with file path and optional index
     - Implement new() constructor
     - Add path validation
     - _Requirements: 1.1, 10.6_
   
-  - [ ] 4.2 Implement JSONL file reading with streaming
+  - [x] 4.2 Implement JSONL file reading with streaming
     - Create load_all() method using serde_json streaming deserializer
     - Create load_by_id() method with early termination
     - Handle empty files and malformed JSON gracefully
     - _Requirements: 1.1, 1.3, 10.2, 10.3, 29.1, 29.2, 29.3_
   
-  - [ ] 4.3 Implement JSONL file writing with atomic operations
+  - [x] 4.3 Implement JSONL file writing with atomic operations
     - Create save() method for single Pearl (append or update)
     - Create save_all() method for bulk writes
     - Use temp file + rename for atomicity
     - Ensure single-line serialization with newline separation
     - _Requirements: 1.2, 1.4, 17.6_
   
-  - [ ] 4.4 Implement file locking for concurrent access
+  - [x] 4.4 Implement file locking for concurrent access
     - Add with_lock() method using fs2 crate
     - Implement platform-appropriate locking (flock/LockFileEx)
     - Add timeout handling for lock acquisition
     - Ensure lock release on success and failure
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5_
   
-  - [ ] 4.5 Implement delete() method
+  - [x] 4.5 Implement delete() method
     - Remove Pearl from JSONL file by rewriting without it
     - Update index if enabled
     - _Requirements: 1.1_
   
-  - [ ] 4.6 Write property tests for storage module
+  - [x] 4.6 Write property tests for storage module
     - **Property 1: JSONL Round-Trip Preservation** (integration with serialization)
     - **Property 3: Multi-Pearl Separation**
     - **Property 25: Write Atomicity**
@@ -113,7 +113,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - **Property 27: Concurrent Write Serialization**
     - **Validates: Requirements 1.2, 1.4, 17.1, 17.4, 17.6**
   
-  - [ ] 4.7 Write unit tests for storage edge cases
+  - [x] 4.7 Write unit tests for storage edge cases
     - Test empty file handling
     - Test malformed JSON recovery
     - Test concurrent read operations
@@ -149,73 +149,73 @@ The project uses a multi-crate workspace structure for separation of concerns:
   - Ask the user if questions arise
 
 
-- [ ] 7. Implement FSM module in pearls-core
-  - [ ] 7.1 Implement Status transition validation
+- [x] 7. Implement FSM module in pearls-core
+  - [x] 7.1 Implement Status transition validation
     - Create can_transition_to() method on Status enum
     - Encode valid transitions: open→in_progress, in_progress→closed, etc.
     - Add is_blocked parameter to handle blocking dependencies
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
   
-  - [ ] 7.2 Implement validate_transition() function
+  - [x] 7.2 Implement validate_transition() function
     - Take Pearl, target status, and graph as parameters
     - Check FSM rules and blocking dependencies
     - Return descriptive errors for invalid transitions
     - _Requirements: 5.6, 11.3_
   
-  - [ ] 7.3 Implement valid_transitions() helper
+  - [x] 7.3 Implement valid_transitions() helper
     - Return list of valid target states for current state
     - Consider blocking status
     - _Requirements: 5.1_
   
-  - [ ] 7.4 Write property tests for FSM module
+  - [x] 7.4 Write property tests for FSM module
     - **Property 14: Valid Transition Enforcement**
     - **Property 16: Deferred Transition Universality**
     - **Property 17: Reopen Capability**
     - **Validates: Requirements 5.1, 5.4, 5.5, 5.6**
   
-  - [ ] 7.5 Write unit tests for FSM edge cases
+  - [x] 7.5 Write unit tests for FSM edge cases
     - Test all valid transitions
     - Test all invalid transitions
     - Test transition error messages
     - _Requirements: 5.1, 5.6, 11.3_
 
-- [ ] 8. Implement graph module in pearls-core
-  - [ ] 8.1 Create IssueGraph struct with petgraph DiGraph
+- [x] 8. Implement graph module in pearls-core
+  - [x] 8.1 Create IssueGraph struct with petgraph DiGraph
     - Implement from_pearls() constructor
     - Build graph from Pearl dependencies
     - Store Pearl data in HashMap for quick lookup
     - _Requirements: 4.1, 4.2_
   
-  - [ ] 8.2 Implement dependency management methods
+  - [x] 8.2 Implement dependency management methods
     - Create add_dependency() with cycle detection
     - Create remove_dependency()
     - Validate dependency types
     - _Requirements: 4.2, 4.3, 4.6_
   
-  - [ ] 8.3 Implement cycle detection
+  - [x] 8.3 Implement cycle detection
     - Use petgraph::algo::is_cyclic_directed()
     - Create find_cycle() to return cycle path
     - Reject operations that would create cycles
     - _Requirements: 4.4, 4.5_
   
-  - [ ] 8.4 Implement topological sort
+  - [x] 8.4 Implement topological sort
     - Use petgraph::algo::toposort()
     - Handle cyclic graphs gracefully
     - _Requirements: 6.1_
   
-  - [ ] 8.5 Implement blocking dependency queries
+  - [x] 8.5 Implement blocking dependency queries
     - Create is_blocked() method checking for open blocking deps
     - Create blocking_deps() returning list of blockers
     - Filter by dependency type (only "blocks" type matters)
     - _Requirements: 4.3, 4.7, 5.2, 5.3_
   
-  - [ ] 8.6 Implement ready_queue() method
+  - [x] 8.6 Implement ready_queue() method
     - Filter by status (exclude closed, deferred)
     - Filter by blocking dependencies (zero open blockers)
     - Sort by priority ascending, then updated_at descending
     - _Requirements: 6.2, 6.3, 6.4, 6.5_
   
-  - [ ] 8.7 Write property tests for graph module
+  - [x] 8.7 Write property tests for graph module
     - **Property 11: Cycle Detection**
     - **Property 12: Acyclic Graph Invariant**
     - **Property 13: Multiple Dependencies Support**
@@ -226,7 +226,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - **Property 21: Ready Queue Ordering**
     - **Validates: Requirements 4.3, 4.4, 4.5, 4.6, 4.7, 6.1, 6.2, 6.3, 6.4**
   
-  - [ ] 8.8 Write unit tests for graph edge cases
+  - [x] 8.8 Write unit tests for graph edge cases
     - Test empty graph
     - Test single node graph
     - Test disconnected components
@@ -240,69 +240,69 @@ The project uses a multi-crate workspace structure for separation of concerns:
   - Ask the user if questions arise
 
 
-- [ ] 10. Implement configuration management in pearls-core
-  - [ ] 10.1 Define Config struct with all settings
+- [x] 10. Implement configuration management in pearls-core
+  - [x] 10.1 Define Config struct with all settings
     - Add fields: default_priority, compact_threshold_days, use_index, output_format, auto_close_on_commit
     - Implement serde derives and default functions
     - _Requirements: 18.2_
   
-  - [ ] 10.2 Implement config file loading
+  - [x] 10.2 Implement config file loading
     - Load from .pearls/config.toml
     - Use sensible defaults if file missing
     - Validate configuration values
     - _Requirements: 18.1, 18.3, 18.4_
   
-  - [ ] 10.3 Implement environment variable overrides
+  - [x] 10.3 Implement environment variable overrides
     - Support PEARLS_* environment variables
     - Override file config with env vars
     - _Requirements: 18.6_
   
-  - [ ] 10.4 Write unit tests for configuration
+  - [x] 10.4 Write unit tests for configuration
     - Test default values
     - Test file loading
     - Test validation errors
     - Test environment variable overrides
     - _Requirements: 18.1, 18.3, 18.4, 18.5, 18.6_
 
-- [ ] 11. Implement error types in pearls-core
-  - [ ] 11.1 Define Error enum with thiserror
+- [x] 11. Implement error types in pearls-core
+  - [x] 11.1 Define Error enum with thiserror
     - Add variants: Io, Json, InvalidPearl, NotFound, CycleDetected, InvalidTransition, AmbiguousId, Git
     - Implement Display with descriptive messages
     - Add context fields for detailed errors
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6_
   
-  - [ ] 11.2 Implement Result type alias
+  - [x] 11.2 Implement Result type alias
     - Create type Result<T> = std::result::Result<T, Error>
     - _Requirements: 11.1_
   
-  - [ ] 11.3 Write unit tests for error messages
+  - [x] 11.3 Write unit tests for error messages
     - Test error formatting
     - Test error context preservation
     - Verify agent-friendly error messages
     - _Requirements: 11.2, 11.3, 11.4, 11.5_
 
-- [ ] 12. Set up CLI framework in pearls-cli
-  - [ ] 12.1 Define CLI structure with clap
+- [x] 12. Set up CLI framework in pearls-cli
+  - [x] 12.1 Define CLI structure with clap
     - Create main command with global flags: --json, --format, --no-color, --config
     - Define subcommands: init, create, show, list, ready, update, close, link, unlink, status, sync, compact, doctor, import
     - Add command-specific arguments and flags
     - _Requirements: 7.1, 7.2, 12.1, 12.3_
   
-  - [ ] 12.2 Implement output formatting module
+  - [x] 12.2 Implement output formatting module
     - Create OutputFormatter trait with methods: format_pearl(), format_list(), format_error()
     - Implement JsonFormatter for --json output
     - Implement TableFormatter for human-readable tables
     - Implement PlainFormatter for simple text
     - _Requirements: 12.2, 12.4, 12.5, 13.1, 13.2, 13.3_
   
-  - [ ] 12.3 Implement color and terminal UI utilities
+  - [x] 12.3 Implement color and terminal UI utilities
     - Add color support with termcolor or similar
     - Respect NO_COLOR environment variable
     - Add table formatting with tabled crate
     - Handle terminal width for wrapping
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5_
   
-  - [ ] 12.4 Write unit tests for output formatting
+  - [x] 12.4 Write unit tests for output formatting
     - Test JSON output structure
     - Test table formatting
     - Test color handling
@@ -310,64 +310,64 @@ The project uses a multi-crate workspace structure for separation of concerns:
     - _Requirements: 12.2, 12.4, 13.1, 13.4_
 
 
-- [ ] 13. Implement core CLI commands (Part 1: Basic operations)
-  - [ ] 13.1 Implement `prl init` command
+- [x] 13. Implement core CLI commands (Part 1: Basic operations)
+  - [x] 13.1 Implement `prl init` command
     - Create .pearls directory
     - Initialize empty issues.jsonl file
     - Create default config.toml
     - Configure Git merge driver and hooks (call setup functions)
     - _Requirements: 7.3, 8.1, 8.2_
   
-  - [ ] 13.2 Implement `prl create` command
+  - [x] 13.2 Implement `prl create` command
     - Parse title and optional fields from arguments
     - Generate Pearl with hash ID
     - Append to issues.jsonl
     - Output created Pearl ID
     - _Requirements: 7.4, 2.3, 3.1, 3.2, 3.3_
   
-  - [ ] 13.3 Implement `prl show` command
+  - [x] 13.3 Implement `prl show` command
     - Parse Pearl ID (support partial IDs)
     - Load Pearl from storage
     - Format and display Pearl details
     - _Requirements: 7.5, 3.6, 3.7_
   
-  - [ ] 13.4 Implement `prl list` command
+  - [x] 13.4 Implement `prl list` command
     - Load all Pearls from storage
     - Apply filters: status, priority, labels, author
     - Sort by specified field
     - Format as table or JSON
     - _Requirements: 7.6, 22.3, 26.4_
   
-  - [ ] 13.5 Write integration tests for basic commands
+  - [x] 13.5 Write integration tests for basic commands
     - Test init creates correct structure
     - Test create adds Pearl to file
     - Test show retrieves correct Pearl
     - Test list with various filters
     - _Requirements: 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 14. Implement core CLI commands (Part 2: State management)
-  - [ ] 14.1 Implement `prl update` command
+- [x] 14. Implement core CLI commands (Part 2: State management)
+  - [x] 14.1 Implement `prl update` command
     - Parse Pearl ID and fields to update
     - Load Pearl, apply updates, validate
     - Update updated_at timestamp
     - Save back to storage
     - _Requirements: 7.7, 26.2_
   
-  - [ ] 14.2 Implement `prl close` command
+  - [x] 14.2 Implement `prl close` command
     - Parse Pearl ID
     - Validate transition to closed (check blocking deps)
     - Update status and timestamp
     - Save to storage
     - _Requirements: 7.8, 5.1, 5.3_
   
-  - [ ] 14.3 Implement `prl ready` command
+  - [x] 14.3 Implement `prl ready` command
     - Load all Pearls and build graph
     - Call ready_queue() method
     - Format and display ready Pearls
     - Handle empty queue case
     - _Requirements: 7.6, 6.1, 6.2, 6.3, 6.4, 6.6_
   
-  - [ ] 14.4 Write integration tests for state management commands
+  - [x] 14.4 Write integration tests for state management commands
     - Test update modifies fields correctly
     - Test close validates blocking dependencies
     - Test ready returns unblocked Pearls

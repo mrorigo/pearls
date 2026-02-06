@@ -1,0 +1,138 @@
+// Rust guideline compliant 2026-02-06
+
+//! Implementation of the `prl update` command.
+//!
+//! Updates an existing Pearl with new field values, validates the changes,
+//! and persists them to the JSONL file.
+
+use anyhow::Result;
+use pearls_core::Storage;
+use std::path::Path;
+
+/// Updates a Pearl with the specified field changes.
+///
+/// # Arguments
+///
+/// * `id` - The Pearl ID (full or partial)
+/// * `title` - Optional new title
+/// * `description` - Optional new description
+/// * `priority` - Optional new priority (0-4)
+/// * `status` - Optional new status
+/// * `add_labels` - Labels to add
+/// * `remove_labels` - Labels to remove
+///
+/// # Returns
+///
+/// Ok if the Pearl was updated successfully, Err otherwise.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The `.pearls` directory does not exist
+/// - The Pearl is not found
+/// - The new values fail validation
+/// - The file cannot be written
+pub fn execute(
+    id: String,
+    title: Option<String>,
+    description: Option<String>,
+    priority: Option<u8>,
+    status: Option<String>,
+    add_labels: Vec<String>,
+    remove_labels: Vec<String>,
+) -> Result<()> {
+    let pearls_dir = Path::new(".pearls");
+
+    // Verify .pearls directory exists
+    if !pearls_dir.exists() {
+        anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
+    }
+
+    // Load all Pearls to resolve partial ID
+    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let all_pearls = storage.load_all()?;
+
+    // Resolve partial ID
+    let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
+
+    // Load the specific Pearl
+    let mut pearl = storage.load_by_id(&full_id)?;
+
+    // Track what was updated for output
+    let mut updated_fields = Vec::new();
+
+    // Apply updates
+    if let Some(new_title) = title {
+        pearl.title = new_title;
+        updated_fields.push("title");
+    }
+
+    if let Some(new_description) = description {
+        pearl.description = new_description;
+        updated_fields.push("description");
+    }
+
+    if let Some(new_priority) = priority {
+        if new_priority > 4 {
+            anyhow::bail!("Priority must be 0-4, got {}", new_priority);
+        }
+        pearl.priority = new_priority;
+        updated_fields.push("priority");
+    }
+
+    if let Some(new_status) = status {
+        let new_status_enum = match new_status.to_lowercase().as_str() {
+            "open" => pearls_core::Status::Open,
+            "in_progress" | "in-progress" => pearls_core::Status::InProgress,
+            "blocked" => pearls_core::Status::Blocked,
+            "deferred" => pearls_core::Status::Deferred,
+            "closed" => pearls_core::Status::Closed,
+            _ => anyhow::bail!("Invalid status: {}", new_status),
+        };
+        pearl.status = new_status_enum;
+        updated_fields.push("status");
+    }
+
+    // Handle label updates
+    if !add_labels.is_empty() {
+        for label in &add_labels {
+            if !pearl.labels.contains(label) {
+                pearl.labels.push(label.clone());
+            }
+        }
+        updated_fields.push("labels");
+    }
+
+    if !remove_labels.is_empty() {
+        for label in &remove_labels {
+            pearl.labels.retain(|l| l != label);
+        }
+        updated_fields.push("labels");
+    }
+
+    // Update the updated_at timestamp
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_secs() as i64;
+    pearl.updated_at = now;
+
+    // Validate Pearl
+    pearl.validate()?;
+
+    // Save to storage
+    storage.save(&pearl)?;
+
+    println!("✓ Updated Pearl: {}", pearl.id);
+    println!("  Title: {}", pearl.title);
+    if pearl.description.len() > 0 {
+        println!("  Description: {}", pearl.description);
+    }
+    println!("  Priority: {}", pearl.priority);
+    println!("  Status: {:?}", pearl.status);
+    if !pearl.labels.is_empty() {
+        println!("  Labels: {}", pearl.labels.join(", "));
+    }
+
+    Ok(())
+}

@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pearls-core",
+    "crates/pearls-cli",
+    "crates/pearls-merge",
+    "crates/pearls-hooks",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Pearls Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pearls/pearls"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "cargo"] }
+tabled = "0.15"
+
+# Git integration
+git2 = "0.18"
+
+# Graph algorithms
+petgraph = "0.6"
+
+# Cryptography
+sha2 = "0.10"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Testing
+proptest = "1.4"
+tempfile = "3.8"
+
+# Performance
+rayon = "1.8"
+
+# File locking
+fs2 = "0.4"
+
+# Time
+chrono = "0.4"

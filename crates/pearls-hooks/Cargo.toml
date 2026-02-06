@@ -1,0 +1,15 @@
+[package]
+name = "pearls-hooks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pearls_hooks"
+path = "src/lib.rs"
+
+[dependencies]
+pearls-core = { path = "../pearls-core" }
+anyhow = { workspace = true }

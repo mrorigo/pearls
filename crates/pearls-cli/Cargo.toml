@@ -1,0 +1,31 @@
+[package]
+name = "pearls-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pearls_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prl"
+path = "src/main.rs"
+
+[dependencies]
+pearls-core = { path = "../pearls-core" }
+clap = { workspace = true }
+tabled = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+git2 = { workspace = true }
+chrono = { workspace = true }
+termcolor = "1.4"
+atty = "0.2"
+term_size = "0.3"
+
+[dev-dependencies]
+tempfile = "3.8"
