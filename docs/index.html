@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pearls | Git-Native Issue Tracking for Agentic Development</title>
+  <meta name="description" content="Pearls is a lightweight, Git-native issue tracker built for agentic development workflows." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --surface: #ffffff;
+      --ink: #122033;
+      --ink-soft: #3b4d64;
+      --line: #d8e1ec;
+      --brand: #0b68ff;
+      --brand-2: #11b5a3;
+      --ok: #0f8d4e;
+      --radius: 18px;
+      --shadow: 0 14px 40px rgba(12, 36, 68, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1000px 500px at 0% -10%, rgba(17, 181, 163, 0.15), transparent 60%),
+        radial-gradient(900px 520px at 100% 0%, rgba(11, 104, 255, 0.18), transparent 60%),
+        var(--bg);
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(to right, rgba(18, 32, 51, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(18, 32, 51, 0.05) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: radial-gradient(circle at center, black 35%, transparent 95%);
+      z-index: -1;
+    }
+
+    .shell {
+      max-width: 1160px;
+      margin: 0 auto;
+      padding: 24px 20px 80px;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 36px;
+    }
+
+    .logo {
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700;
+      font-size: 1.2rem;
+      letter-spacing: 0.02em;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 0 0 6px rgba(11, 104, 255, 0.12);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .nav-links a, .btn {
+      text-decoration: none;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.8);
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-weight: 500;
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+      backdrop-filter: blur(8px);
+    }
+
+    .nav-links a:hover, .btn:hover {
+      transform: translateY(-1px);
+      border-color: #b8c8db;
+      background: #fff;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 28px;
+      align-items: stretch;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-main {
+      padding: 40px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.86rem;
+      font-weight: 600;
+      color: var(--ok);
+      border: 1px solid #bee7d1;
+      background: #f2fcf6;
+      border-radius: 999px;
+      padding: 7px 12px;
+      margin-bottom: 18px;
+    }
+
+    h1, h2, h3 {
+      font-family: "Space Grotesk", sans-serif;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.06;
+      margin-bottom: 16px;
+    }
+
+    .lead {
+      color: var(--ink-soft);
+      font-size: 1.04rem;
+      max-width: 62ch;
+      margin-bottom: 26px;
+    }
+
+    .cta-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--brand), #3b8bff);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+      box-shadow: 0 10px 26px rgba(11, 104, 255, 0.3);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.03);
+    }
+
+    .install {
+      border: 1px solid #cdd8e5;
+      border-radius: 14px;
+      background: #fbfdff;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      color: #0c3f88;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+
+    .copy {
+      border: 1px solid #bfd0e4;
+      background: #fff;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      color: #214f93;
+      transition: background 180ms ease;
+    }
+
+    .copy:hover { background: #f1f7ff; }
+
+    .hero-side {
+      padding: 24px;
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .metric {
+      border: 1px solid #d8e4f2;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .metric strong {
+      display: block;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1.5rem;
+    }
+
+    .metric span { color: var(--ink-soft); font-size: 0.92rem; }
+
+    .section {
+      margin-top: 34px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .tile {
+      padding: 22px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .tile h3 {
+      font-size: 1.05rem;
+      margin-bottom: 7px;
+    }
+
+    .tile p {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 0.95rem;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pill {
+      border: 1px solid #c9d9eb;
+      color: #285a93;
+      background: #f4f9ff;
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .footer {
+      margin-top: 34px;
+      padding: 22px;
+      border-radius: 16px;
+      background: #0f2138;
+      color: #dfe9f7;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .footer a {
+      color: #a9d5ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 520ms ease, transform 520ms ease;
+    }
+
+    .reveal.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 700px) {
+      .hero-main { padding: 26px; }
+      .hero-side { padding: 18px; }
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+      .nav { margin-bottom: 24px; }
+      .footer { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <main class="shell">
+    <nav class="nav reveal">
+      <div class="logo"><span class="dot"></span> Pearls</div>
+      <div class="nav-links">
+        <a href="USER-GUIDE.md">User Guide</a>
+        <a href="WHITEPAPER.md">Whitepaper</a>
+        <a href="PEARLS.md">Architecture</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <article class="card hero-main reveal">
+        <div class="eyebrow">Built for Agentic Development</div>
+        <h1>Issue Tracking for the Next Generation of Software Delivery</h1>
+        <p class="lead">
+          Pearls is a Git-native issue tracker that keeps planning close to code. Structured, dependency-aware, and local-first, it gives humans and agents one reliable source of truth.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/mrorigo/pearls">View on GitHub</a>
+          <a class="btn" href="USER-GUIDE.md">Read the Guide</a>
+        </div>
+      </article>
+
+      <aside class="card hero-side reveal">
+        <div class="metric">
+          <strong>1 Binary</strong>
+          <span>No daemon. No service. Just `prl`.</span>
+        </div>
+        <div class="metric">
+          <strong>Git Native</strong>
+          <span>Hooks + semantic merge with predictable workflows.</span>
+        </div>
+        <div class="metric">
+          <strong>JSONL Core</strong>
+          <span>Human-auditable, machine-friendly issue state.</span>
+        </div>
+        <div class="metric">
+          <strong>Rust Fast</strong>
+          <span>Streaming reads and graph checks at interactive speed.</span>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section">
+      <div class="grid-3">
+        <article class="tile reveal">
+          <h3>Local-First by Design</h3>
+          <p>Work offline, commit issue state with code, and keep full history in your repository.</p>
+        </article>
+        <article class="tile reveal">
+          <h3>Graph-Aware Execution</h3>
+          <p>Dependencies and FSM transitions keep execution order clean for people and agents.</p>
+        </article>
+        <article class="tile reveal">
+          <h3>Trustworthy Operations</h3>
+          <p>Atomic writes, lock coordination, merge conflict handling, and integrity checks.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="grid-2">
+        <article class="tile reveal">
+          <h2>Why Teams Adopt Pearls</h2>
+          <p>Cloud trackers add context switching and API overhead to every automation loop. Pearls stays in your repo and makes issue state a first-class development artifact.</p>
+          <div class="pill-row">
+            <span class="pill">Agent Friendly</span>
+            <span class="pill">Safe Merges</span>
+            <span class="pill">Flexible Metadata</span>
+            <span class="pill">Standalone</span>
+          </div>
+        </article>
+        <article class="tile reveal">
+          <h2>Production-Ready Workflow</h2>
+          <p>`prl init` sets up `.pearls`, Git hooks, and merge integration. `prl sync`, `prl doctor`, and `prl compact` complete a practical end-to-end operating model.</p>
+          <div class="pill-row">
+            <span class="pill">prl hooks</span>
+            <span class="pill">prl merge</span>
+            <span class="pill">prl doctor</span>
+            <span class="pill">prl sync</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <article class="tile reveal">
+        <h2>Install Pearls</h2>
+        <p>Get the `prl` binary in your PATH with a single command.</p>
+        <div class="install" style="margin-top: 12px;">
+          <code id="installCmd">cargo install --git https://github.com/mrorigo/pearls --package pearls-cli</code>
+          <button class="copy" id="copyBtn" type="button">Copy</button>
+        </div>
+      </article>
+    </section>
+
+    <footer class="footer reveal">
+      <div>
+        <strong style="font-family: 'Space Grotesk', sans-serif;">Pearls</strong> - Git-native issue tracking for modern agentic engineering.
+      </div>
+      <div>
+        <a href="../README.md">README</a> |
+        <a href="USER-GUIDE.md">Guide</a> |
+        <a href="WHITEPAPER.md">Whitepaper</a>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    const reveals = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) entry.target.classList.add('show');
+      });
+    }, { threshold: 0.15 });
+    reveals.forEach((el, idx) => {
+      el.style.transitionDelay = `${Math.min(idx * 70, 420)}ms`;
+      observer.observe(el);
+    });
+
+    const copyBtn = document.getElementById('copyBtn');
+    const installCmd = document.getElementById('installCmd');
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(installCmd.textContent.trim());
+        copyBtn.textContent = 'Copied';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1400);
+      } catch (_) {
+        copyBtn.textContent = 'Select + Copy';
+      }
+    });
+  </script>
+</body>
+</html>

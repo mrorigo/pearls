@@ -1,121 +1,92 @@
-# Pearls Issue Tracker
+<img src="docs/logo.png">
 
-A lightweight, Git-native distributed issue tracking system designed for agentic workflows.
+# Pearls
 
-## Project Structure
+Git-native issue tracking for the age of agentic development.
 
-This is a Cargo workspace containing four crates:
+Pearls is a fast, local-first issue tracker that lives in your repo, speaks in structured data, and behaves like a serious engineering tool. No cloud lock-in. No daemon circus. No mystery state.
 
-### `pearls-core`
-Core library containing:
-- Data models (Pearl, Dependency, Status)
-- Storage engine (JSONL read/write, streaming, indexing)
-- Graph algorithms (DAG, cycle detection, topological sort)
-- FSM logic (state transitions, validation)
-- Hash ID generation and resolution
-- Error types and result handling
+## Why Pearls
 
-### `pearls-cli`
-Command-line interface providing the `prl` binary with commands:
-- `init` - Initialize repository
-- `create` - Create new Pearl
-- `show` - Display Pearl details
-- `list` - List Pearls
-- `ready` - Show ready queue
-- `update` - Update Pearl
-- `close` - Close Pearl
-- `link` - Add dependency
-- `unlink` - Remove dependency
-- `status` - Project health check
-- `sync` - Git sync operation
-- `compact` - Archive old Pearls
-- `doctor` - Integrity validation
-- `import` - Migrate from other formats
-- `hooks` - Run Git hooks (pre-commit/post-merge)
-- `merge` - Run merge driver for JSONL files
+- `Local-first`: issue state lives with your code in `.pearls/issues.jsonl`
+- `Agent-ready`: strict schema, dependency graph, finite-state transitions
+- `Git-native`: merge driver + hooks for real workflows
+- `Single binary`: `prl` is all users need in their PATH
+- `Rust-fast`: optimized for tight human and agent feedback loops
 
-### `pearls-merge`
-Git merge driver for semantic JSONL merging.
+If markdown TODOs feel too fuzzy and SaaS trackers feel too heavy, Pearls is the middle path that actually scales.
 
-### `pearls-hooks`
-Git hook implementations:
-- Pre-commit validation
-- Post-merge integrity checks
+## Install
 
-## Building
-
-```bash
-cargo build
-```
-
-## Installation
-
-Install `prl` from the Git repo (fastest setup):
+Fastest install:
 
 ```bash
 cargo install --git https://github.com/mrorigo/pearls --package pearls-cli
 ```
 
-Alternatively, install from a local checkout:
+Install from local checkout:
 
 ```bash
 cargo install --path /path/to/pearls/crates/pearls-cli
 ```
 
-Ensure `prl` is on your PATH for Git hooks and merge drivers.
+Ensure `prl` is on PATH so Git hooks and merge drivers can invoke it.
 
-## Usage
-
-Initialize a repository and create your first Pearl:
+## 60-Second Start
 
 ```bash
+git init
 prl init
-prl create "Add search index" --priority 1 --label storage,performance
-```
 
-Common workflows:
+prl create "Ship launch page" --priority 1 --label marketing,web
+prl create "Wire merge driver docs" --priority 2 --label docs
 
-```bash
-# List open Pearls sorted by most recent update
 prl list --status open --sort updated_at
-
-# Show a Pearl by full or partial ID
-prl show prl-abc123
-prl show abc
-
-# Add a blocking dependency
-prl link prl-abc123 prl-def456 blocks
-
-# Update a Pearl
-prl update prl-abc123 --status in_progress --add-label urgent
-
-# Archive closed Pearls older than 30 days
-prl compact --threshold-days 30
+prl ready
 ```
 
-See `examples/WORKFLOW.md` for a longer sample workflow.
+## Core Commands
 
-## Testing
+- `prl init`: initialize `.pearls`, hooks, and Git merge integration
+- `prl create`, `prl update`, `prl close`: lifecycle operations
+- `prl list`, `prl show`, `prl ready`: discovery and execution flow
+- `prl link`, `prl unlink`: dependency management
+- `prl meta`: structured per-issue metadata
+- `prl doctor`: integrity checks and optional repairs
+- `prl compact`: archive old closed issues
+- `prl sync`: Git sync workflow helper
+- `prl hooks`: run hook actions directly
+- `prl merge`: merge-driver entrypoint for JSONL conflicts
+
+## Documentation
+
+- User guide: `docs/USER-GUIDE.md`
+- Whitepaper: `docs/WHITEPAPER.md`
+- Deep architecture: `docs/PEARLS.md`
+- End-to-end sample: `examples/WORKFLOW.md`
+
+## Project Layout
+
+This workspace ships four crates:
+
+- `crates/pearls-core`: models, storage, graph, FSM, identity
+- `crates/pearls-cli`: `prl` command-line application
+- `crates/pearls-merge`: semantic JSONL merge engine
+- `crates/pearls-hooks`: pre-commit and post-merge validations
+
+## Build and Test
 
 ```bash
+cargo check
+cargo fmt
+cargo clippy -- -D warnings
 cargo test
 ```
 
-## Development
+## Engineering Standards
 
-This project follows the [Microsoft Pragmatic Rust Guidelines](https://microsoft.github.io/rust-guidelines/). See `AGENTS.md` for detailed coding standards.
-
-```bash
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy -- -D warnings
-
-# Check compilation
-cargo check
-```
+Pearls follows the [Microsoft Pragmatic Rust Guidelines](https://microsoft.github.io/rust-guidelines/). See `AGENTS.md` for repository-specific coding standards.
 
 ## License
 
-MIT OR Apache-2.0
+MIT
