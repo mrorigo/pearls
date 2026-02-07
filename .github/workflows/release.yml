@@ -25,10 +25,6 @@ jobs:
             target: aarch64-apple-darwin
             ext: ""
             archive: tar.gz
-          - runner: macos-13
-            target: x86_64-apple-darwin
-            ext: ""
-            archive: tar.gz
           - runner: windows-latest
             target: x86_64-pc-windows-msvc
             ext: ".exe"
