@@ -5,6 +5,7 @@
 //! Displays detailed information about a specific Pearl,
 //! supporting both full and partial ID resolution.
 
+use crate::output_mode::is_json_output;
 use crate::OutputFormatter;
 use anyhow::Result;
 use pearls_core::{identity, Storage};
@@ -78,23 +79,25 @@ fn format_dep_type(dep_type: pearls_core::DepType) -> &'static str {
 
 fn display_pearl(pearl: pearls_core::Pearl, formatter: &dyn OutputFormatter) -> Result<()> {
     let mut output = formatter.format_pearl(&pearl);
-    if !pearl.deps.is_empty() {
-        output.push_str("\nDependencies:\n");
-        for dep in &pearl.deps {
-            output.push_str(&format!(
-                "  - {} ({})\n",
-                dep.target_id,
-                format_dep_type(dep.dep_type)
-            ));
+    if !is_json_output() {
+        if !pearl.deps.is_empty() {
+            output.push_str("\nDependencies:\n");
+            for dep in &pearl.deps {
+                output.push_str(&format!(
+                    "  - {} ({})\n",
+                    dep.target_id,
+                    format_dep_type(dep.dep_type)
+                ));
+            }
         }
-    }
-    if !pearl.comments.is_empty() {
-        output.push_str("\nComments:\n");
-        for comment in &pearl.comments {
-            output.push_str(&format!(
-                "  - {} [{}] {}\n",
-                comment.id, comment.author, comment.body
-            ));
+        if !pearl.comments.is_empty() {
+            output.push_str("\nComments:\n");
+            for comment in &pearl.comments {
+                output.push_str(&format!(
+                    "  - {} [{}] {}\n",
+                    comment.id, comment.author, comment.body
+                ));
+            }
         }
     }
     println!("{}", output);
