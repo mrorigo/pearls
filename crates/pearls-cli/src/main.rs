@@ -320,7 +320,13 @@ fn main() -> anyhow::Result<()> {
         Some(OutputFormat::Json) => "json",
         Some(OutputFormat::Table) => "table",
         Some(OutputFormat::Plain) => "plain",
-        None => "table",
+        None => {
+            if cli.json {
+                "json"
+            } else {
+                "table"
+            }
+        }
     };
     let formatter = create_formatter(format, use_color, cli.absolute_time);
 

@@ -319,6 +319,12 @@ JSON output:
 prl list --format json
 ```
 
+Shorthand:
+
+```bash
+prl list --json
+```
+
 Plain output:
 
 ```bash
