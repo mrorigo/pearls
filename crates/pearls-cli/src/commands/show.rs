@@ -121,11 +121,13 @@ fn resolve_id(id: &str, storage: &Storage, include_archived: bool) -> Result<Str
 
     // Load archived Pearls if requested
     if include_archived {
-        let archive_path = storage.path().parent().unwrap().join("archive.jsonl");
-        if archive_path.exists() {
-            let archive_storage = Storage::new(archive_path)?;
-            if let Ok(archived) = archive_storage.load_all() {
-                pearls.extend(archived);
+        if let Some(parent) = storage.path().parent() {
+            let archive_path = parent.join("archive.jsonl");
+            if archive_path.exists() {
+                let archive_storage = Storage::new(archive_path)?;
+                if let Ok(archived) = archive_storage.load_all() {
+                    pearls.extend(archived);
+                }
             }
         }
     }

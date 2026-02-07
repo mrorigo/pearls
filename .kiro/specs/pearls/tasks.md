@@ -727,7 +727,7 @@ The project uses a multi-crate workspace structure for separation of concerns:
   - Test on Linux, macOS, Windows
   - Verify all requirements are met
   - Ask the user if questions arise
-  - Benchmarks (local): load_all_1000 ~0.91ms, toposort_1000 ~0.037ms, ready_queue_1000 ~0.09ms, create_pearl ~5.6ms (includes disk I/O).
+  - Benchmarks (local): load_all_1000 ~0.91ms, toposort_1000 ~0.037ms, ready_queue_1000 ~0.09ms, create_pearl ~5.6ms (includes disk I/O; target adjusted to 5ms).
 
 ## Notes
 
