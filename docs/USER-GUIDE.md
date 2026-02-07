@@ -7,7 +7,7 @@ This guide covers everyday usage, repository setup, and Git integration details 
 Install `prl` (fastest):
 
 ```bash
-cargo install --git https://github.com/mrorigo/pearls --package pearls-cli
+cargo install --git https://github.com/mrorigo/pearls pearls-cli
 ```
 
 Initialize Pearls in your repository:

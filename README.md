@@ -22,7 +22,7 @@ If markdown TODOs feel too fuzzy and SaaS trackers feel too heavy, Pearls is the
 Fastest install:
 
 ```bash
-cargo install --git https://github.com/mrorigo/pearls --package pearls-cli
+cargo install --git https://github.com/mrorigo/pearls pearls-cli
 ```
 
 Install from local checkout:
