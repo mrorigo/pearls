@@ -276,6 +276,12 @@ enum Commands {
         #[command(subcommand)]
         action: MetaAction,
     },
+
+    /// Manage Pearl comments
+    Comments {
+        #[command(subcommand)]
+        action: CommentAction,
+    },
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -308,6 +314,37 @@ enum MetaAction {
 
         /// Metadata value (JSON)
         value: String,
+    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum CommentAction {
+    /// Add a comment to a Pearl
+    Add {
+        /// Pearl ID (full or partial)
+        id: String,
+
+        /// Comment text
+        body: String,
+
+        /// Comment author
+        #[arg(long)]
+        author: Option<String>,
+    },
+
+    /// List comments for a Pearl
+    List {
+        /// Pearl ID (full or partial)
+        id: String,
+    },
+
+    /// Delete a comment from a Pearl
+    Delete {
+        /// Pearl ID (full or partial)
+        id: String,
+
+        /// Comment ID (full or partial)
+        comment_id: String,
     },
 }
 
@@ -455,6 +492,17 @@ fn main() -> anyhow::Result<()> {
             }
             MetaAction::Set { id, key, value } => {
                 commands::meta::set(id, key, value)?;
+            }
+        },
+        Some(Commands::Comments { action }) => match action {
+            CommentAction::Add { id, body, author } => {
+                commands::comments::add(id, body, author)?;
+            }
+            CommentAction::List { id } => {
+                commands::comments::list(id, format == "json")?;
+            }
+            CommentAction::Delete { id, comment_id } => {
+                commands::comments::delete(id, comment_id)?;
             }
         },
         None => {

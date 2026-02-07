@@ -3,6 +3,7 @@
 //! Command implementations for the Pearls CLI.
 
 pub mod close;
+pub mod comments;
 pub mod compact;
 pub mod create;
 pub mod doctor;

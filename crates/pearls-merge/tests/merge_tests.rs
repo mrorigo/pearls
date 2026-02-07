@@ -18,6 +18,7 @@ fn base_pearl(id: &str) -> Pearl {
         labels: vec!["core".to_string()],
         deps: Vec::new(),
         metadata: Default::default(),
+        comments: Vec::new(),
     }
 }
 

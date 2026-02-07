@@ -270,6 +270,28 @@ prl meta set prl-abc123 estimate 3
 prl meta get prl-abc123 owner
 ```
 
+## Comments
+
+Add a comment:
+
+```bash
+prl comments add prl-abc123 "Needs integration test coverage"
+prl comments add prl-abc123 "Looks good to merge" --author reviewer
+```
+
+List comments:
+
+```bash
+prl comments list prl-abc123
+prl comments list prl-abc123 --json
+```
+
+Delete a comment:
+
+```bash
+prl comments delete prl-abc123 cmt-1a2b3c
+```
+
 ## Archiving
 
 Archive closed Pearls older than a threshold:

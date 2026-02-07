@@ -86,6 +86,7 @@ fn arb_pearl() -> impl Strategy<Value = Pearl> {
                     labels,
                     deps,
                     metadata,
+                    comments: Vec::new(),
                 }
             },
         )

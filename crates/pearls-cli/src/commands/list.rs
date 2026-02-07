@@ -241,6 +241,7 @@ mod tests {
                 dep_type: DepType::Blocks,
             }],
             metadata: Default::default(),
+            comments: Vec::new(),
         }
     }
 

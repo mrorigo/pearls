@@ -22,6 +22,7 @@ fn create_pearl(id: &str, status: Status) -> Pearl {
         labels: Vec::new(),
         deps: Vec::new(),
         metadata: HashMap::new(),
+        comments: Vec::new(),
     }
 }
 

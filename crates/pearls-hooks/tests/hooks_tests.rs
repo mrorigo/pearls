@@ -19,6 +19,7 @@ fn create_pearl(id: &str) -> Pearl {
         labels: Vec::new(),
         deps: Vec::new(),
         metadata: Default::default(),
+        comments: Vec::new(),
     }
 }
 

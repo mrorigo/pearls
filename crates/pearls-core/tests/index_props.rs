@@ -34,6 +34,7 @@ fn pearls_from_ids(ids: Vec<String>) -> Vec<Pearl> {
             labels: Vec::new(),
             deps: Vec::new(),
             metadata: Default::default(),
+            comments: Vec::new(),
         })
         .collect()
 }

@@ -815,6 +815,66 @@ fn test_meta_set_updates_metadata() {
 }
 
 #[test]
+fn test_comments_add_appends_comment() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let pearl = pearls_core::Pearl::new("Comment target".to_string(), "alice".to_string());
+    let pearl_id = pearl.id.clone();
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&pearl).expect("Failed to save pearl");
+
+    pearls_cli::commands::comments::add(
+        pearl_id.clone(),
+        "Looks good".to_string(),
+        Some("reviewer".to_string()),
+    )
+    .expect("Failed to add comment");
+
+    let updated = storage
+        .load_by_id(&pearl_id)
+        .expect("Failed to load updated pearl");
+    assert_eq!(updated.comments.len(), 1, "One comment should be present");
+    assert_eq!(updated.comments[0].author, "reviewer");
+    assert_eq!(updated.comments[0].body, "Looks good");
+    assert!(
+        updated.comments[0].id.starts_with("cmt-"),
+        "Comment ID should use cmt- prefix"
+    );
+}
+
+#[test]
+fn test_comments_delete_removes_comment() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut pearl = pearls_core::Pearl::new("Comment target".to_string(), "alice".to_string());
+    let comment_id = pearl
+        .add_comment("reviewer".to_string(), "temporary note".to_string())
+        .expect("Failed to seed comment");
+    let pearl_id = pearl.id.clone();
+
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&pearl).expect("Failed to save pearl");
+
+    let partial_comment_id = comment_id[..5].to_string();
+    pearls_cli::commands::comments::delete(pearl_id.clone(), partial_comment_id)
+        .expect("Failed to delete comment");
+
+    let updated = storage
+        .load_by_id(&pearl_id)
+        .expect("Failed to load updated pearl");
+    assert!(
+        updated.comments.is_empty(),
+        "Comments should be empty after deletion"
+    );
+}
+
+#[test]
 fn test_create_with_description_file() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let _guard = enter_dir(temp_dir.path());

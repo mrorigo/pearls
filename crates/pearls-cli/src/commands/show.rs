@@ -88,6 +88,15 @@ fn display_pearl(pearl: pearls_core::Pearl, formatter: &dyn OutputFormatter) -> 
             ));
         }
     }
+    if !pearl.comments.is_empty() {
+        output.push_str("\nComments:\n");
+        for comment in &pearl.comments {
+            output.push_str(&format!(
+                "  - {} [{}] {}\n",
+                comment.id, comment.author, comment.body
+            ));
+        }
+    }
     println!("{}", output);
 
     Ok(())

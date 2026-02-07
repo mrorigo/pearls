@@ -86,6 +86,7 @@ fn arb_pearl() -> impl Strategy<Value = Pearl> {
                     labels,
                     deps,
                     metadata,
+                    comments: Vec::new(),
                 }
             },
         )
@@ -213,6 +214,7 @@ proptest! {
             labels: vec![label.clone()],
             deps: Vec::new(),
             metadata: Default::default(),
+            comments: Vec::new(),
         };
         let json = serde_json::to_string(&pearl).expect("Serialization failed");
         let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
@@ -236,6 +238,7 @@ proptest! {
             labels: Vec::new(),
             deps: Vec::new(),
             metadata: Default::default(),
+            comments: Vec::new(),
         };
         let json = serde_json::to_string(&pearl).expect("Serialization failed");
         let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");
@@ -260,6 +263,7 @@ proptest! {
             labels: Vec::new(),
             deps: Vec::new(),
             metadata: Default::default(),
+            comments: Vec::new(),
         };
         let json = serde_json::to_string(&pearl).expect("Serialization failed");
         let deserialized: Pearl = serde_json::from_str(&json).expect("Deserialization failed");

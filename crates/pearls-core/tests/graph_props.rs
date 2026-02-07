@@ -49,6 +49,7 @@ fn arb_pearl() -> impl Strategy<Value = Pearl> {
                 labels: Vec::new(),
                 deps: Vec::new(),
                 metadata: HashMap::new(),
+                comments: Vec::new(),
             },
         )
 }

@@ -52,6 +52,7 @@ prl ready
 - `prl create`, `prl update`, `prl close`: lifecycle operations
 - `prl list`, `prl show`, `prl ready`: discovery and execution flow
 - `prl link`, `prl unlink`: dependency management
+- `prl comments`: add, list, and delete issue comments
 - `prl meta`: structured per-issue metadata
 - `prl doctor`: integrity checks and optional repairs
 - `prl compact`: archive old closed issues

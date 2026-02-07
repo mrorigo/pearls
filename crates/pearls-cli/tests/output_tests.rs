@@ -18,6 +18,7 @@ fn create_test_pearl() -> Pearl {
         labels: vec!["test".to_string(), "formatting".to_string()],
         deps: vec![],
         metadata: HashMap::new(),
+        comments: Vec::new(),
     }
 }
 

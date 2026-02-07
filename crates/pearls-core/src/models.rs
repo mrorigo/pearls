@@ -3,6 +3,7 @@
 //! Core data models for Pearls.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// Status of a Pearl in the finite state machine.
@@ -44,6 +45,19 @@ pub struct Dependency {
     pub dep_type: DepType,
 }
 
+/// A comment attached to a Pearl.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comment {
+    /// Unique hash-based comment identifier (format: cmt-XXXXXX).
+    pub id: String,
+    /// Comment author identifier.
+    pub author: String,
+    /// Comment body text.
+    pub body: String,
+    /// Unix timestamp of creation.
+    pub created_at: i64,
+}
+
 /// A Pearl represents a single issue or task.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pearl {
@@ -74,6 +88,9 @@ pub struct Pearl {
     /// Extensible metadata for agent-specific data.
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// Comments attached to this Pearl.
+    #[serde(default)]
+    pub comments: Vec<Comment>,
 }
 
 /// Default priority value (medium).
@@ -114,6 +131,7 @@ impl Pearl {
             labels: Vec::new(),
             deps: Vec::new(),
             metadata: HashMap::new(),
+            comments: Vec::new(),
         }
     }
 
@@ -145,6 +163,124 @@ impl Pearl {
 
         crate::identity::validate_id_format(&self.id)?;
 
+        for comment in &self.comments {
+            if comment.id.trim().is_empty() {
+                return Err(crate::Error::InvalidPearl(
+                    "Comment ID cannot be empty".to_string(),
+                ));
+            }
+
+            if comment.author.trim().is_empty() {
+                return Err(crate::Error::InvalidPearl(
+                    "Comment author cannot be empty".to_string(),
+                ));
+            }
+
+            if comment.body.trim().is_empty() {
+                return Err(crate::Error::InvalidPearl(
+                    "Comment body cannot be empty".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
+
+    /// Adds a comment and returns the new comment ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `author` - Comment author
+    /// * `body` - Comment body
+    ///
+    /// # Returns
+    ///
+    /// The new comment ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the author or body is empty.
+    pub fn add_comment(&mut self, author: String, body: String) -> crate::Result<String> {
+        let author = author.trim().to_string();
+        let body = body.trim().to_string();
+
+        if author.is_empty() {
+            return Err(crate::Error::InvalidPearl(
+                "Comment author cannot be empty".to_string(),
+            ));
+        }
+
+        if body.is_empty() {
+            return Err(crate::Error::InvalidPearl(
+                "Comment body cannot be empty".to_string(),
+            ));
+        }
+
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
+            .as_secs() as i64;
+
+        let mut nonce = 0u32;
+        let comment_id = loop {
+            let id = generate_comment_id(&self.id, &author, &body, now, nonce);
+            if !self.comments.iter().any(|comment| comment.id == id) {
+                break id;
+            }
+            nonce = nonce.saturating_add(1);
+        };
+
+        self.comments.push(Comment {
+            id: comment_id.clone(),
+            author,
+            body,
+            created_at: now,
+        });
+        self.updated_at = now;
+
+        Ok(comment_id)
+    }
+
+    /// Deletes a comment by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `comment_id` - The comment ID to delete
+    ///
+    /// # Returns
+    ///
+    /// True if a comment was deleted, false otherwise.
+    pub fn delete_comment(&mut self, comment_id: &str) -> bool {
+        let initial_len = self.comments.len();
+        self.comments.retain(|comment| comment.id != comment_id);
+        if self.comments.len() != initial_len {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+                self.updated_at = now.as_secs() as i64;
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn generate_comment_id(
+    pearl_id: &str,
+    author: &str,
+    body: &str,
+    timestamp: i64,
+    nonce: u32,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(pearl_id.as_bytes());
+    hasher.update(author.as_bytes());
+    hasher.update(body.as_bytes());
+    hasher.update(timestamp.to_le_bytes());
+    hasher.update(nonce.to_le_bytes());
+
+    let hash = hasher.finalize();
+    let hex = format!("{:x}", hash);
+    format!("cmt-{}", &hex[..6])
 }

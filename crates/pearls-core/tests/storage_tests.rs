@@ -22,6 +22,7 @@ fn create_test_pearl(id: &str, title: &str) -> Pearl {
         labels: vec![],
         deps: vec![],
         metadata: Default::default(),
+        comments: Vec::new(),
     }
 }
 
