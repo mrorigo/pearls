@@ -4,6 +4,7 @@
 //!
 //! Displays project health checks and a "land the plane" checklist.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use git2::{BranchType, Repository, StatusOptions};
@@ -47,6 +48,33 @@ pub fn execute(detailed: bool) -> Result<()> {
         .count();
 
     let recent_updates = collect_recent_updates(&pearls);
+    let synced = matches!(git_status.sync_status.as_deref(), Some("in sync"));
+
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "git": {
+                    "is_clean": git_status.is_clean,
+                    "sync_status": git_status.sync_status,
+                    "tests_status": git_status.tests_status
+                },
+                "summary": {
+                    "open_p0": p0_open,
+                    "blocked": blocked_count,
+                    "recent_updates_24h": recent_updates.len()
+                },
+                "checklist": {
+                    "working_tree_clean": git_status.is_clean,
+                    "no_open_p0": p0_open == 0,
+                    "no_blocked": blocked_count == 0,
+                    "synced_with_remote": synced
+                },
+                "recent": recent_updates
+            }))?
+        );
+        return Ok(());
+    }
 
     println!("Pearls Status");
     println!("-------------");
@@ -76,10 +104,7 @@ pub fn execute(detailed: bool) -> Result<()> {
         print_check("Working tree clean", git_status.is_clean);
         print_check("No open P0 Pearls", p0_open == 0);
         print_check("No blocked Pearls", blocked_count == 0);
-        print_check(
-            "Branch is synced with remote",
-            matches!(git_status.sync_status.as_deref(), Some("in sync")),
-        );
+        print_check("Branch is synced with remote", synced);
     }
 
     println!();

@@ -4,6 +4,7 @@
 //!
 //! Provides `prl meta get` and `prl meta set` for Pearl metadata.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{identity, Storage};
 use std::path::Path;
@@ -38,7 +39,20 @@ pub fn get(id: String, key: String) -> Result<()> {
 
     match pearl.metadata.get(&key) {
         Some(value) => {
-            println!("{}", value);
+            if is_json_output() {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "ok",
+                        "action": "meta_get",
+                        "id": pearl.id,
+                        "key": key,
+                        "value": value
+                    }))?
+                );
+            } else {
+                println!("{}", value);
+            }
             Ok(())
         }
         None => anyhow::bail!("Metadata key '{}' not found for {}", key, pearl.id),
@@ -77,7 +91,7 @@ pub fn set(id: String, key: String, value: String) -> Result<()> {
     let parsed: serde_json::Value = serde_json::from_str(&value)
         .map_err(|e| anyhow::anyhow!("Metadata value must be valid JSON: {}", e))?;
 
-    pearl.metadata.insert(key, parsed);
+    pearl.metadata.insert(key.clone(), parsed);
 
     use std::time::{SystemTime, UNIX_EPOCH};
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
@@ -86,6 +100,18 @@ pub fn set(id: String, key: String, value: String) -> Result<()> {
     pearl.validate()?;
     storage.save(&pearl)?;
 
-    println!("✓ Updated metadata for {}", pearl.id);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "meta_set",
+                "id": pearl.id,
+                "key": key
+            }))?
+        );
+    } else {
+        println!("✓ Updated metadata for {}", pearl.id);
+    }
     Ok(())
 }

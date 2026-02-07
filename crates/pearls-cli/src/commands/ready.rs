@@ -5,6 +5,7 @@
 //! Displays the ready queue: Pearls that are unblocked and ready for work,
 //! sorted by priority and recency.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::Storage;
 use std::path::Path;
@@ -38,7 +39,18 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
     let all_pearls = storage.load_all()?;
 
     if all_pearls.is_empty() {
-        println!("No Pearls found. Create one with 'prl create <title>'");
+        if is_json_output() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ready": [],
+                    "total": 0,
+                    "message": "No Pearls found"
+                }))?
+            );
+        } else {
+            println!("No Pearls found. Create one with 'prl create <title>'");
+        }
         return Ok(());
     }
 
@@ -49,13 +61,36 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
     let ready = graph.ready_queue();
 
     if ready.is_empty() {
-        println!("No Pearls ready for work.");
-        println!("All Pearls are either closed, deferred, or blocked by dependencies.");
+        if is_json_output() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ready": [],
+                    "total": 0,
+                    "message": "No Pearls ready for work"
+                }))?
+            );
+        } else {
+            println!("No Pearls ready for work.");
+            println!("All Pearls are either closed, deferred, or blocked by dependencies.");
+        }
         return Ok(());
     }
 
     // Apply limit if specified
     let display_ready: Vec<_> = ready.iter().take(limit.unwrap_or(usize::MAX)).collect();
+
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ready": display_ready,
+                "total": ready.len(),
+                "returned": display_ready.len()
+            }))?
+        );
+        return Ok(());
+    }
 
     println!("Ready Queue ({} items):", display_ready.len());
     println!();

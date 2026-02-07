@@ -4,6 +4,7 @@
 //!
 //! Links two Pearls with a dependency relationship and performs cycle detection.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{identity, DepType, Dependency, IssueGraph, Storage};
 use std::path::Path;
@@ -75,12 +76,25 @@ pub fn execute(from: String, to: String, dep_type: String) -> Result<()> {
     updated.validate()?;
     storage.save(&updated)?;
 
-    println!(
-        "✓ Linked Pearl: {} -> {} ({})",
-        from_id,
-        to_id,
-        format_dep_type(dep_type)
-    );
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "link",
+                "from": from_id,
+                "to": to_id,
+                "dep_type": format_dep_type(dep_type)
+            }))?
+        );
+    } else {
+        println!(
+            "✓ Linked Pearl: {} -> {} ({})",
+            from_id,
+            to_id,
+            format_dep_type(dep_type)
+        );
+    }
 
     Ok(())
 }

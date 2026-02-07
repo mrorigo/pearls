@@ -8,10 +8,12 @@ use clap::Parser;
 
 pub mod commands;
 pub mod output;
+pub mod output_mode;
 pub mod progress;
 pub mod terminal;
 
 pub use output::{create_formatter, OutputFormatter};
+pub use output_mode::set_json_output;
 pub use terminal::{get_terminal_width, should_use_color, wrap_text};
 
 #[derive(Parser, Debug)]
@@ -366,6 +368,7 @@ fn main() -> anyhow::Result<()> {
         }
     };
     let formatter = create_formatter(format, use_color, cli.absolute_time);
+    set_json_output(format == "json");
 
     match cli.command {
         Some(Commands::Init) => {

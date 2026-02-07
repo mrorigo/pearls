@@ -5,6 +5,7 @@
 //! Closes a Pearl by transitioning it to the closed status, with validation
 //! to ensure no blocking dependencies prevent the transition.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{Status, Storage};
 use std::path::Path;
@@ -62,9 +63,20 @@ pub fn execute(id: String) -> Result<()> {
     // Save to storage
     storage.save(&pearl)?;
 
-    println!("✓ Closed Pearl: {}", pearl.id);
-    println!("  Title: {}", pearl.title);
-    println!("  Status: {:?}", pearl.status);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "close",
+                "pearl": pearl
+            }))?
+        );
+    } else {
+        println!("✓ Closed Pearl: {}", pearl.id);
+        println!("  Title: {}", pearl.title);
+        println!("  Status: {:?}", pearl.status);
+    }
 
     Ok(())
 }

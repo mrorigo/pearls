@@ -5,6 +5,7 @@
 //! Creates a new Pearl with the specified title and optional fields,
 //! generates a hash-based ID, and appends it to the JSONL file.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{Config, Pearl, Storage};
 use std::path::Path;
@@ -89,16 +90,27 @@ pub fn execute(
     }
     storage.save(&pearl)?;
 
-    println!("✓ Created Pearl: {}", pearl.id);
-    println!("  Title: {}", pearl.title);
-    if !pearl.description.is_empty() {
-        println!("  Description: {}", pearl.description);
-    }
-    if pearl.priority != 2 {
-        println!("  Priority: {}", pearl.priority);
-    }
-    if !pearl.labels.is_empty() {
-        println!("  Labels: {}", pearl.labels.join(", "));
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "create",
+                "pearl": pearl
+            }))?
+        );
+    } else {
+        println!("✓ Created Pearl: {}", pearl.id);
+        println!("  Title: {}", pearl.title);
+        if !pearl.description.is_empty() {
+            println!("  Description: {}", pearl.description);
+        }
+        if pearl.priority != 2 {
+            println!("  Priority: {}", pearl.priority);
+        }
+        if !pearl.labels.is_empty() {
+            println!("  Labels: {}", pearl.labels.join(", "));
+        }
     }
 
     Ok(())

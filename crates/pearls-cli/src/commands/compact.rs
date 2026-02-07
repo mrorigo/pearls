@@ -4,6 +4,7 @@
 //!
 //! Archives closed Pearls older than a threshold to `.pearls/archive.jsonl`.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use pearls_core::{Config, Pearl, Status, Storage};
@@ -47,17 +48,31 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
         .into_iter()
         .partition(|pearl| pearl.status == Status::Closed && pearl.updated_at <= cutoff_ts);
 
-    println!(
-        "Compaction threshold: {} days (cutoff timestamp {})",
-        threshold_days, cutoff_ts
-    );
-    println!(
-        "Closed Pearls eligible for archive: {}",
-        archive_candidates.len()
-    );
+    if !is_json_output() {
+        println!(
+            "Compaction threshold: {} days (cutoff timestamp {})",
+            threshold_days, cutoff_ts
+        );
+        println!(
+            "Closed Pearls eligible for archive: {}",
+            archive_candidates.len()
+        );
+    }
 
     if dry_run {
-        if archive_candidates.is_empty() {
+        if is_json_output() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "ok",
+                    "action": "compact",
+                    "dry_run": true,
+                    "threshold_days": threshold_days,
+                    "cutoff_timestamp": cutoff_ts,
+                    "eligible": archive_candidates
+                }))?
+            );
+        } else if archive_candidates.is_empty() {
             println!("Dry run: no Pearls would be archived.");
         } else {
             println!("Dry run: Pearls to archive:");
@@ -69,7 +84,19 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
     }
 
     if archive_candidates.is_empty() {
-        println!("No Pearls to archive.");
+        if is_json_output() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "ok",
+                    "action": "compact",
+                    "threshold_days": threshold_days,
+                    "archived_total": 0
+                }))?
+            );
+        } else {
+            println!("No Pearls to archive.");
+        }
         return Ok(());
     }
 
@@ -100,8 +127,22 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
     archive_storage.save_all(&merged_archive)?;
     storage.save_all(&remaining)?;
 
-    println!("Archived Pearls: {}", merged_archive.len());
-    println!("Active Pearls remaining: {}", remaining.len());
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "compact",
+                "threshold_days": threshold_days,
+                "cutoff_timestamp": cutoff_ts,
+                "archived_total": merged_archive.len(),
+                "active_remaining": remaining.len()
+            }))?
+        );
+    } else {
+        println!("Archived Pearls: {}", merged_archive.len());
+        println!("Active Pearls remaining: {}", remaining.len());
+    }
 
     Ok(())
 }

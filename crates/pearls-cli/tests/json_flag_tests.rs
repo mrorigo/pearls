@@ -80,3 +80,41 @@ fn prl_comments_list_json_flag_outputs_json() {
         stdout
     );
 }
+
+#[test]
+fn prl_create_json_flag_outputs_json() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let pearls_dir = temp_dir.path().join(".pearls");
+    fs::create_dir(&pearls_dir).expect("create .pearls dir");
+    fs::write(pearls_dir.join("issues.jsonl"), "").expect("create issues.jsonl");
+    fs::write(
+        pearls_dir.join("config.toml"),
+        "default_priority = 2\ncompact_threshold_days = 30\nuse_index = false\noutput_format = \"table\"\nauto_close_on_commit = false\n",
+    )
+    .expect("create config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_prl"))
+        .current_dir(temp_dir.path())
+        .args(["create", "JSON create", "--json"])
+        .output()
+        .expect("run prl");
+
+    assert!(
+        output.status.success(),
+        "expected success, got status: {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim_start().starts_with('{'),
+        "expected JSON output, got:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\"action\": \"create\""),
+        "expected create action field, got:\n{}",
+        stdout
+    );
+}

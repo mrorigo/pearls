@@ -4,6 +4,7 @@
 //!
 //! Validates JSONL syntax, schema compliance, graph integrity, and common issues.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{IssueGraph, Pearl, Status, Storage};
 use std::collections::HashSet;
@@ -156,7 +157,24 @@ pub fn execute(fix: bool) -> Result<()> {
         });
     }
 
-    report_findings(&findings);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": if findings.iter().any(|f| f.severity == Severity::Error) { "error" } else { "ok" },
+                "action": "doctor",
+                "fix_applied": fix,
+                "findings": findings.iter().map(|f| {
+                    serde_json::json!({
+                        "severity": severity_label(f.severity),
+                        "message": f.message
+                    })
+                }).collect::<Vec<_>>()
+            }))?
+        );
+    } else {
+        report_findings(&findings);
+    }
 
     if findings.iter().any(|f| f.severity == Severity::Error) {
         if fix && !has_cycle_error && !has_closed_blocked_error {
@@ -182,6 +200,14 @@ fn report_findings(findings: &[Finding]) {
             Severity::Info => "INFO",
         };
         println!("[{}] {}", label, finding.message);
+    }
+}
+
+fn severity_label(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Info => "info",
     }
 }
 

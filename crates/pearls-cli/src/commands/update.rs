@@ -5,6 +5,7 @@
 //! Updates an existing Pearl with new field values, validates the changes,
 //! and persists them to the JSONL file.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::Storage;
 use std::path::Path;
@@ -124,15 +125,26 @@ pub fn execute(
     }
     storage.save(&pearl)?;
 
-    println!("✓ Updated Pearl: {}", pearl.id);
-    println!("  Title: {}", pearl.title);
-    if pearl.description.len() > 0 {
-        println!("  Description: {}", pearl.description);
-    }
-    println!("  Priority: {}", pearl.priority);
-    println!("  Status: {:?}", pearl.status);
-    if !pearl.labels.is_empty() {
-        println!("  Labels: {}", pearl.labels.join(", "));
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "update",
+                "pearl": pearl
+            }))?
+        );
+    } else {
+        println!("✓ Updated Pearl: {}", pearl.id);
+        println!("  Title: {}", pearl.title);
+        if pearl.description.len() > 0 {
+            println!("  Description: {}", pearl.description);
+        }
+        println!("  Priority: {}", pearl.priority);
+        println!("  Status: {:?}", pearl.status);
+        if !pearl.labels.is_empty() {
+            println!("  Labels: {}", pearl.labels.join(", "));
+        }
     }
 
     Ok(())

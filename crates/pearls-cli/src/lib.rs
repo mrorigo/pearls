@@ -6,6 +6,7 @@
 
 pub mod commands;
 pub mod output;
+pub mod output_mode;
 pub mod progress;
 pub mod terminal;
 

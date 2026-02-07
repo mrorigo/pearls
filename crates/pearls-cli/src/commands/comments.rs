@@ -4,6 +4,7 @@
 //!
 //! Supports adding, listing, and deleting comments attached to a Pearl.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{identity, Comment, Storage};
 use std::path::Path;
@@ -37,7 +38,19 @@ pub fn add(id: String, body: String, author: Option<String>) -> Result<()> {
     pearl.validate()?;
     storage.save(&pearl)?;
 
-    println!("✓ Added comment {} to {}", comment_id, pearl.id);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "comment_add",
+                "id": pearl.id,
+                "comment_id": comment_id
+            }))?
+        );
+    } else {
+        println!("✓ Added comment {} to {}", comment_id, pearl.id);
+    }
     Ok(())
 }
 
@@ -117,10 +130,22 @@ pub fn delete(id: String, comment_id: String) -> Result<()> {
 
     pearl.validate()?;
     storage.save(&pearl)?;
-    println!(
-        "✓ Deleted comment {} from {}",
-        resolved_comment_id, pearl.id
-    );
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "comment_delete",
+                "id": pearl.id,
+                "comment_id": resolved_comment_id
+            }))?
+        );
+    } else {
+        println!(
+            "✓ Deleted comment {} from {}",
+            resolved_comment_id, pearl.id
+        );
+    }
 
     Ok(())
 }

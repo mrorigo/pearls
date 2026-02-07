@@ -4,6 +4,7 @@
 //!
 //! Synchronizes the repository with the remote using pull --rebase semantics.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use git2::{Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature};
 use pearls_core::{IssueGraph, Storage};
@@ -32,7 +33,19 @@ pub fn execute(dry_run: bool) -> Result<()> {
     }
 
     if dry_run {
-        println!("Sync dry-run: would fetch, rebase, validate, and push.");
+        if is_json_output() {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "ok",
+                    "action": "sync",
+                    "dry_run": true,
+                    "message": "would fetch, rebase, validate, and push"
+                }))?
+            );
+        } else {
+            println!("Sync dry-run: would fetch, rebase, validate, and push.");
+        }
         return Ok(());
     }
 
@@ -53,7 +66,18 @@ pub fn execute(dry_run: bool) -> Result<()> {
         }
     }
 
-    println!("✓ Sync completed.");
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "sync",
+                "dry_run": false
+            }))?
+        );
+    } else {
+        println!("✓ Sync completed.");
+    }
     Ok(())
 }
 

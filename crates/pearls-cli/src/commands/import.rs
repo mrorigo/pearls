@@ -4,6 +4,7 @@
 //!
 //! Imports Pearls data from Beads JSONL format.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{Pearl, Storage};
 use std::io::BufRead;
@@ -84,9 +85,22 @@ pub fn import_beads(path: String) -> Result<()> {
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
     storage.save_all(&pearls)?;
 
-    println!("Imported Pearls: {}", pearls.len());
-    if skipped > 0 {
-        println!("Skipped entries: {}", skipped);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "import",
+                "source": beads_path.display().to_string(),
+                "imported": pearls.len(),
+                "skipped": skipped
+            }))?
+        );
+    } else {
+        println!("Imported Pearls: {}", pearls.len());
+        if skipped > 0 {
+            println!("Skipped entries: {}", skipped);
+        }
     }
 
     Ok(())

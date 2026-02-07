@@ -4,6 +4,7 @@
 //!
 //! Removes a dependency relationship between two Pearls.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{identity, IssueGraph, Storage};
 use std::path::Path;
@@ -58,7 +59,19 @@ pub fn execute(from: String, to: String) -> Result<()> {
     updated.validate()?;
     storage.save(&updated)?;
 
-    println!("✓ Unlinked Pearl: {} -> {}", from_id, to_id);
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "unlink",
+                "from": from_id,
+                "to": to_id
+            }))?
+        );
+    } else {
+        println!("✓ Unlinked Pearl: {} -> {}", from_id, to_id);
+    }
 
     Ok(())
 }

@@ -5,6 +5,7 @@
 //! Initializes a new Pearls repository by creating the `.pearls` directory,
 //! initializing the JSONL file, and setting up Git integration.
 
+use crate::output_mode::is_json_output;
 use anyhow::Result;
 use git2::Repository;
 use pearls_core::Config;
@@ -51,10 +52,23 @@ pub fn execute() -> Result<()> {
     // Configure Git merge driver and hooks
     setup_git_integration()?;
 
-    println!("✓ Pearls repository initialized at .pearls/");
-    println!("  - Created .pearls/issues.jsonl");
-    println!("  - Created .pearls/config.toml");
-    println!("  - Configured Git merge driver");
+    if is_json_output() {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "status": "ok",
+                "action": "init",
+                "path": ".pearls",
+                "files": [".pearls/issues.jsonl", ".pearls/config.toml"],
+                "git_merge_driver_configured": true
+            }))?
+        );
+    } else {
+        println!("✓ Pearls repository initialized at .pearls/");
+        println!("  - Created .pearls/issues.jsonl");
+        println!("  - Created .pearls/config.toml");
+        println!("  - Configured Git merge driver");
+    }
 
     Ok(())
 }
