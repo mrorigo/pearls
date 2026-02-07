@@ -8,6 +8,28 @@ However, Beads introduces operational complexity through its reliance on a backg
 
 This report presents the architectural blueprint for "Pearls," a streamlined successor to Beads designed specifically for the Rust ecosystem. Pearls retains critical semantic capabilities—the dependency-aware graph, strict finite state machine (FSM), and hash-based identity system—while radically simplifying the persistence layer. By mandating a "JSONL-only" storage strategy and leveraging Rust's high-performance characteristics for real-time parsing, Pearls eliminates the need for SQLite and background daemons. This architecture ensures the "source of truth" remains a single, human-readable text file seamlessly integrated with Git's version control mechanisms.
 
+### 1.1 Design Principles
+
+Pearls is guided by the following principles:
+
+- **Local-First**: The repository is the source of truth. All data lives alongside the code and is fully offline-capable.
+- **Single-File Canonical State**: `issues.jsonl` is the authoritative record. Any derived data (indexes) is optional and rebuildable.
+- **Semantic Graph Over Lists**: Dependency edges guide execution order and prevent invalid progress.
+- **Deterministic Merges**: Merge behavior should be predictable and preserve user intent.
+- **Minimal Operational Surface**: No daemons, no services, no background processes.
+- **Human and Agent Friendly**: JSONL is diffable by humans and parseable by machines.
+- **Fail-Closed Integrity**: Invalid states are rejected with explicit errors.
+
+### 1.2 Rust Conventions and Engineering Standards
+
+Pearls follows the Microsoft Pragmatic Rust Guidelines:
+
+- **Panic Policy**: Panics are reserved for unrecoverable conditions only.
+- **Unsafe Code**: Avoided unless absolutely necessary; safe abstractions only.
+- **Error Handling**: Recoverable errors use `Result<T, E>` with `anyhow` for apps and `thiserror` for libraries.
+- **Documentation**: Public APIs include doc comments with clear sections and examples.
+- **Logging**: Structured logging is preferred over ad-hoc output in production components.
+
 ## 2. The Contextual Crisis in Agentic Development
 
 To understand the necessity of Pearls, one must first analyze the deficiencies of current tooling in the context of agentic workflows. The interaction pattern of an AI agent differs fundamentally from that of a human developer. While humans rely on visual dashboards and can tolerate seconds of latency, agents operate via API calls where every token of input costs money and consumes finite context window capacity.
@@ -171,7 +193,7 @@ Valid transitions are enforced by the Rust type system:
 
 ### 8.2 The "Blocked" Meta-State
 
-In Pearls, blocked is not a static field but a derived state. An issue is effectively "blocked" if graph traversal determines it has open dependencies. However, for UX purposes, the status field may explicitly reflect blocked to allow quick filtering without traversing the entire graph. Pearls auto-updates this status: when a blocking dependency is closed, the dependent issue automatically reverts to open (or ready).
+In Pearls, blocked is a derived state computed from dependencies. The CLI uses the graph to decide if a Pearl is blocked (for example, in `prl ready` and FSM validation). The status field may still be explicitly set to `blocked` for filtering and clarity, but it is not auto-updated; users or automation update it when desired.
 
 ## 9. Rust Implementation Strategy: The Core
 
@@ -208,18 +230,20 @@ Tight and seamless Git integration is vital. Pearls interacts with Git not just 
 The biggest risk of storing data in Git is merge conflicts. If two agents edit `issues.jsonl` simultaneously, Git's default textual merge may corrupt JSON syntax. Pearls includes a binary merge driver `pearls-merge`:
 
 **Mechanism:**
-- **Installation**: `prl init` modifies `.git/config` and `.gitattributes`.
-- **Trigger**: When Git detects a conflict in `issues.jsonl`, it invokes `pearls-merge %O %A %B` (Ancestor, Ours, Theirs).
+- **Installation**: `prl init` writes `.gitattributes` and configures the merge driver. This requires a Git repo (`git init`) to exist.
+- **Trigger**: When Git detects a conflict in `issues.jsonl`, it invokes `prl merge %O %A %B` (Ancestor, Ours, Theirs).
 - **Logic**: The driver parses all three files into HashMaps, identifies issues modified in both branches, applies field-level merge (e.g., Branch A changed Title, Branch B changed Status → Result has new Title and new Status), handles list merging, and re-serializes to valid JSONL.
 
 This ensures `issues.jsonl` remains syntactically valid even after complex merges.
 
 ### 10.2 Git Hooks
 
-Pearls installs lightweight hooks to maintain context:
+Pearls installs lightweight hooks to maintain context. The hook scripts call the global `prl` binary:
 
-- **pre-commit**: Scans `issues.jsonl` for formatting errors. Checks if the commit message references a Pearls ID (e.g., `Fixes (prl-123)`) and auto-closes the issue if configured.
-- **post-merge**: After a `git pull`, this hook runs a quick `prl doctor` check to ensure graph integrity is maintained (e.g., no orphaned dependencies).
+- **pre-commit**: `prl hooks pre-commit` scans `issues.jsonl` for formatting errors. It checks commit messages for a `Fixes (prl-123)` pattern and auto-closes if configured.
+- **post-merge**: `prl hooks post-merge` validates dependency integrity after merges.
+
+Hooks are local to each clone. Teams should document hook installation in their onboarding flow.
 
 ## 11. Performance Engineering: No-Daemon Optimization
 
@@ -251,7 +275,7 @@ Pearls enforces the "Land the Plane" workflow described in Beads documentation. 
 [ ] Sync with remote
 ```
 
-The agent must satisfy these conditions. Pearls facilitates this with the `prl sync` command, which wraps `git pull --rebase && prl merge && git push` into a single atomic operation.
+The agent must satisfy these conditions. Pearls facilitates this with the `prl sync` command, which wraps `git pull --rebase` and `git push` into a single atomic operation.
 
 ### 12.2 Context Window Optimization
 

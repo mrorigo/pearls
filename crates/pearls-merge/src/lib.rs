@@ -4,4 +4,5 @@
 //!
 //! Provides three-way merge functionality for JSONL files.
 
+pub mod driver;
 pub mod merge;

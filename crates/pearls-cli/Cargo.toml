@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 pearls-core = { path = "../pearls-core" }
+pearls-hooks = { path = "../pearls-hooks" }
+pearls-merge = { path = "../pearls-merge" }
 clap = { workspace = true }
 tabled = { workspace = true }
 serde = { workspace = true }

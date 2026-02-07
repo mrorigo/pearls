@@ -659,6 +659,7 @@ impl Storage {
     {
         use fs2::FileExt;
         use std::fs::OpenOptions;
+        use std::time::{Duration, Instant};
 
         // Create or open the lock file
         let lock_path = self.path.with_extension("lock");
@@ -667,15 +668,24 @@ impl Storage {
             .write(true)
             .open(&lock_path)?;
 
-        // Try to acquire exclusive lock with timeout
-        // Note: fs2 doesn't support timeouts directly, so we use try_lock
-        // and rely on the OS-level timeout behavior
-        lock_file.try_lock_exclusive().map_err(|e| {
-            Error::Io(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                format!("Failed to acquire lock: {}", e),
-            ))
-        })?;
+        // Try to acquire exclusive lock with timeout.
+        // fs2 does not support timeouts directly, so we retry with backoff.
+        let timeout = Duration::from_secs(5);
+        let start = Instant::now();
+        loop {
+            match lock_file.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(err) => {
+                    if start.elapsed() >= timeout {
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::WouldBlock,
+                            format!("Failed to acquire lock: {}", err),
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
 
         // Execute the closure
         let result = f(self);

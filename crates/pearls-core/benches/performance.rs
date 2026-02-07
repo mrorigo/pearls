@@ -5,7 +5,7 @@ use pearls_core::{DepType, Dependency, IssueGraph, Pearl, Status, Storage};
 use tempfile::TempDir;
 
 fn build_pearls(count: usize) -> Vec<Pearl> {
-    let mut pearls = Vec::with_capacity(count);
+    let mut pearls: Vec<Pearl> = Vec::with_capacity(count);
     for i in 0..count {
         let title = format!("Pearl {}", i);
         let mut pearl = Pearl::new(title, "bench".to_string());

@@ -1010,7 +1010,7 @@ fn test_create_with_author_override() {
     )
     .expect("Create failed");
 
-    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
         .expect("Failed to create storage");
     let pearls = storage.load_all().expect("Failed to load pearls");
     assert_eq!(pearls.len(), 1, "Expected one pearl");
@@ -1046,7 +1046,7 @@ fn test_create_uses_git_author_when_available() {
     )
     .expect("Create failed");
 
-    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
         .expect("Failed to create storage");
     let pearls = storage.load_all().expect("Failed to load pearls");
     assert_eq!(pearls.len(), 1, "Expected one pearl");
@@ -1086,7 +1086,7 @@ fn test_create_falls_back_to_system_username() {
     )
     .expect("Create failed");
 
-    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
         .expect("Failed to create storage");
     let pearls = storage.load_all().expect("Failed to load pearls");
     assert_eq!(pearls.len(), 1, "Expected one pearl");

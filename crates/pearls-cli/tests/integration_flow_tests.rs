@@ -95,7 +95,7 @@ fn test_full_workflow_end_to_end() {
     )
     .expect("Create second failed");
 
-    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
         .expect("Failed to create storage");
     let pearls = storage.load_all().expect("Failed to load pearls");
     assert_eq!(pearls.len(), 2, "Expected two pearls");
@@ -182,7 +182,7 @@ fn test_concurrent_access_saves_all_pearls() {
         handle.join().expect("Thread failed");
     }
 
-    let mut storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
         .expect("Failed to create storage");
     let pearls = storage.load_all().expect("Failed to load pearls");
     assert_eq!(pearls.len(), 4, "Expected all pearls to be saved");

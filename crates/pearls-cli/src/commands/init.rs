@@ -6,6 +6,7 @@
 //! initializing the JSONL file, and setting up Git integration.
 
 use anyhow::Result;
+use git2::Repository;
 use pearls_core::Config;
 use std::fs;
 use std::path::Path;
@@ -71,9 +72,11 @@ pub fn execute() -> Result<()> {
 /// Returns an error if Git operations fail.
 fn setup_git_integration() -> Result<()> {
     // Configure merge driver in .git/config
-    // This would typically use git2 crate to configure:
-    // - merge.pearls.driver = "pearls-merge %O %A %B"
-    // - merge.pearls.name = "Pearls JSONL merge driver"
+    let repo = Repository::discover(".")
+        .map_err(|_| anyhow::anyhow!("Not a git repository. Run 'git init' first."))?;
+    let mut config = repo.config()?;
+    config.set_str("merge.pearls.name", "Pearls JSONL merge driver")?;
+    config.set_str("merge.pearls.driver", "prl merge %O %A %B")?;
 
     // Create .gitattributes file
     let gitattributes_path = Path::new(".gitattributes");
@@ -83,14 +86,8 @@ fn setup_git_integration() -> Result<()> {
         fs::write(gitattributes_path, gitattributes_content)?;
     }
 
-    install_hook(
-        ".git/hooks/pre-commit",
-        "cargo run -q -p pearls-hooks --bin pearls-pre-commit",
-    )?;
-    install_hook(
-        ".git/hooks/post-merge",
-        "cargo run -q -p pearls-hooks --bin pearls-post-merge",
-    )?;
+    install_hook(".git/hooks/pre-commit", "prl hooks pre-commit")?;
+    install_hook(".git/hooks/post-merge", "prl hooks post-merge")?;
 
     Ok(())
 }

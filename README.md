@@ -31,6 +31,8 @@ Command-line interface providing the `prl` binary with commands:
 - `compact` - Archive old Pearls
 - `doctor` - Integrity validation
 - `import` - Migrate from other formats
+- `hooks` - Run Git hooks (pre-commit/post-merge)
+- `merge` - Run merge driver for JSONL files
 
 ### `pearls-merge`
 Git merge driver for semantic JSONL merging.
@@ -45,6 +47,22 @@ Git hook implementations:
 ```bash
 cargo build
 ```
+
+## Installation
+
+Install `prl` from the Git repo (fastest setup):
+
+```bash
+cargo install --git https://github.com/mrorigo/pearls --package pearls-cli
+```
+
+Alternatively, install from a local checkout:
+
+```bash
+cargo install --path /path/to/pearls/crates/pearls-cli
+```
+
+Ensure `prl` is on your PATH for Git hooks and merge drivers.
 
 ## Usage
 

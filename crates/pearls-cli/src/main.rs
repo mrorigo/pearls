@@ -243,6 +243,28 @@ enum Commands {
         fix: bool,
     },
 
+    /// Run Pearls Git hooks
+    Hooks {
+        #[command(subcommand)]
+        action: commands::hooks::HookAction,
+    },
+
+    /// Run the Pearls merge driver
+    Merge {
+        /// Path to ancestor version
+        ancestor: String,
+
+        /// Path to current version (ours)
+        current: String,
+
+        /// Path to other version (theirs)
+        other: String,
+
+        /// Path to output file
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
     /// Import from other formats
     Import {
         #[command(subcommand)]
@@ -404,6 +426,17 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Doctor { fix }) => {
             commands::doctor::execute(fix)?;
+        }
+        Some(Commands::Hooks { action }) => {
+            commands::hooks::execute(action)?;
+        }
+        Some(Commands::Merge {
+            ancestor,
+            current,
+            other,
+            output,
+        }) => {
+            commands::merge::execute(ancestor, current, other, output)?;
         }
         Some(Commands::Import { source }) => match source {
             ImportSource::Beads { path } => {
