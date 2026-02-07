@@ -12,6 +12,7 @@ Pearls is a fast, local-first issue tracker that lives in your repo, speaks in s
 - `Agent-ready`: strict schema, dependency graph, finite-state transitions
 - `Git-native`: merge driver + hooks for real workflows
 - `Single binary`: `prl` is all users need in their PATH
+- `Small`: example macOS release binary is ~4.4MB (Beads `bd` is ~31MB on the same platform; sizes vary by target and build flags)
 - `Rust-fast`: optimized for tight human and agent feedback loops
 
 If markdown TODOs feel too fuzzy and SaaS trackers feel too heavy, Pearls is the middle path that actually scales.

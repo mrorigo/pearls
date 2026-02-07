@@ -127,10 +127,12 @@ Pearls is designed for large repositories:
 - Optional index for fast lookup
 - Benchmarks for load and graph operations
 
+Binary size is intentionally modest. As an example, the macOS release `prl` binary is ~4.4MB, compared to ~31MB for Beads `bd` on the same platform (sizes vary by target, build flags, and symbol stripping).
+
 Target performance for 1000 Pearls:
 - `load_all`: <10ms
 - `topological_sort`: <5ms
-- `create`: <1ms
+- `create`: <5ms (includes disk I/O)
 - `ready_queue`: <15ms
 
 ## Reliability and Safety
