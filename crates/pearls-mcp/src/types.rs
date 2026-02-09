@@ -187,6 +187,48 @@ pub struct CommentsDeleteResult {
     pub comment_id: String,
 }
 
+/// Input parameters for the `link` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct LinkInput {
+    /// Source Pearl ID (full or partial).
+    pub from: String,
+    /// Target Pearl ID (full or partial).
+    pub to: String,
+    /// Dependency type (blocks, parent_child, related, discovered_from).
+    pub dep_type: String,
+}
+
+/// Output payload for the `link` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct LinkResult {
+    /// Source Pearl ID.
+    pub from: String,
+    /// Target Pearl ID.
+    pub to: String,
+    /// Dependency type.
+    pub dep_type: String,
+}
+
+/// Input parameters for the `unlink` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct UnlinkInput {
+    /// Source Pearl ID (full or partial).
+    pub from: String,
+    /// Target Pearl ID (full or partial).
+    pub to: String,
+}
+
+/// Output payload for the `unlink` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct UnlinkResult {
+    /// Source Pearl ID.
+    pub from: String,
+    /// Target Pearl ID.
+    pub to: String,
+    /// Removed dependencies count.
+    pub removed: usize,
+}
+
 /// Input parameters for the `plan_snapshot` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct PlanSnapshotInput {

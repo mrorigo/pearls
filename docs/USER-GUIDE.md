@@ -58,6 +58,8 @@ Currently available MCP tools:
 - `comments_add`: add a comment to a Pearl.
 - `comments_list`: list comments for a Pearl.
 - `comments_delete`: delete a comment from a Pearl.
+- `link`: add a dependency between two Pearls.
+- `unlink`: remove a dependency between two Pearls.
 - `next_action`: get the next recommended Pearl plus blockers context.
 - `plan_snapshot`: get a compact board summary.
 - `transition_safe`: attempt a status transition and return blockers if denied.

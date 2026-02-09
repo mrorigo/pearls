@@ -5,9 +5,10 @@
 use crate::types::{
     BlockedChain, CloseInput, CloseResult, CommentsAddInput, CommentsAddResult, CommentsDeleteInput,
     CommentsDeleteResult, CommentsListInput, CommentsListResult, CreateInput, CreateResult,
-    EmptyInput, ListInput, ListResult, NextActionResult, PlanSnapshotInput, PlanSnapshotResult,
-    ReadyInput, ReadyResource, ShowInput, ShowResult, StatusCount, TransitionSafeInput,
-    TransitionSafeResult, UpdateInput, UpdateResult,
+    EmptyInput, LinkInput, LinkResult, ListInput, ListResult, NextActionResult, PlanSnapshotInput,
+    PlanSnapshotResult, ReadyInput, ReadyResource, ShowInput, ShowResult, StatusCount,
+    TransitionSafeInput, TransitionSafeResult, UnlinkInput, UnlinkResult, UpdateInput,
+    UpdateResult,
 };
 use pearls_app::{
     list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
@@ -477,6 +478,81 @@ impl PearlsMcp {
         })
     }
 
+    fn link_tool(&self, input: LinkInput) -> Result<LinkResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let dep_type = parse_dep_type(&input.dep_type)?;
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let mut pearls = storage.load_all()?;
+        let from_id = resolve_pearl_id(&input.from, &pearls)?;
+        let to_id = resolve_pearl_id(&input.to, &pearls)?;
+
+        let from_index = pearls
+            .iter()
+            .position(|pearl| pearl.id == from_id)
+            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+
+        let mut updated = pearls[from_index].clone();
+        if !updated
+            .deps
+            .iter()
+            .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
+        {
+            updated.deps.push(pearls_core::Dependency {
+                target_id: to_id.clone(),
+                dep_type,
+            });
+        }
+
+        pearls[from_index] = updated.clone();
+        pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+        storage.save(&updated)?;
+
+        Ok(LinkResult {
+            from: from_id,
+            to: to_id,
+            dep_type: input.dep_type,
+        })
+    }
+
+    fn unlink_tool(&self, input: UnlinkInput) -> Result<UnlinkResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let mut pearls = storage.load_all()?;
+        let from_id = resolve_pearl_id(&input.from, &pearls)?;
+        let to_id = resolve_pearl_id(&input.to, &pearls)?;
+
+        let from_index = pearls
+            .iter()
+            .position(|pearl| pearl.id == from_id)
+            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+
+        let mut updated = pearls[from_index].clone();
+        let before = updated.deps.len();
+        updated.deps.retain(|dep| dep.target_id != to_id);
+        let removed = before.saturating_sub(updated.deps.len());
+        pearls[from_index] = updated.clone();
+        pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+        storage.save(&updated)?;
+
+        Ok(UnlinkResult {
+            from: from_id,
+            to: to_id,
+            removed,
+        })
+    }
+
     fn list_tool(&self, input: ListInput) -> Result<ListResult, AppError> {
         let pearls = self.load_all_pearls(input.include_archived.unwrap_or(false))?;
 
@@ -791,6 +867,32 @@ impl PearlsMcp {
         params: Parameters<CommentsDeleteInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let result = self.comments_delete_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Links two Pearls with a dependency.
+    #[tool(description = "Link two Pearls with a dependency.")]
+    async fn link(
+        &self,
+        params: Parameters<LinkInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.link_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Removes a dependency between Pearls.
+    #[tool(description = "Unlink two Pearls.")]
+    async fn unlink(
+        &self,
+        params: Parameters<UnlinkInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.unlink_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
         })?;
@@ -1187,6 +1289,66 @@ mod tests {
             })
             .expect("comment list failed");
         assert_eq!(list.total, 0);
+    }
+
+    #[test]
+    fn test_link_and_unlink() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let from = server
+            .create_tool(CreateInput {
+                title: "Parent".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let to = server
+            .create_tool(CreateInput {
+                title: "Child".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let link = server
+            .link_tool(LinkInput {
+                from: from.pearl.id.clone(),
+                to: to.pearl.id.clone(),
+                dep_type: "blocks".to_string(),
+            })
+            .expect("link failed");
+        assert_eq!(link.from, from.pearl.id);
+        assert_eq!(link.to, to.pearl.id);
+
+        let list = server
+            .show_tool(ShowInput {
+                id: from.pearl.id.clone(),
+                include_archived: Some(false),
+            })
+            .expect("show failed");
+        assert_eq!(list.pearl.deps.len(), 1);
+
+        let unlink = server
+            .unlink_tool(UnlinkInput {
+                from: from.pearl.id.clone(),
+                to: to.pearl.id.clone(),
+            })
+            .expect("unlink failed");
+        assert_eq!(unlink.removed, 1);
+
+        let list = server
+            .show_tool(ShowInput {
+                id: from.pearl.id,
+                include_archived: Some(false),
+            })
+            .expect("show failed");
+        assert!(list.pearl.deps.is_empty());
     }
 
     #[test]
