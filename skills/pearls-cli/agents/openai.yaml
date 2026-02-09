@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pearls CLI"
+  short_description: "Operate the Pearls CLI for issues"
+  default_prompt: "Use $pearls-cli to manage Pearls issues with the prl CLI."
