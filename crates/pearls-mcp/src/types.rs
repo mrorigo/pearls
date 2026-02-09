@@ -131,14 +131,14 @@ pub struct ReadyInput {
     pub limit: Option<usize>,
 }
 
-/// Input parameters for the `pearls_plan_snapshot` tool.
+/// Input parameters for the `plan_snapshot` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct PlanSnapshotInput {
     /// Maximum number of items to include in summaries.
     pub limit: Option<usize>,
 }
 
-/// Output payload for the `pearls_next_action` tool.
+/// Output payload for the `next_action` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct NextActionResult {
     /// The recommended Pearl, if any.
@@ -150,7 +150,7 @@ pub struct NextActionResult {
     pub message: Option<String>,
 }
 
-/// Output payload for the `pearls_plan_snapshot` tool.
+/// Output payload for the `plan_snapshot` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanSnapshotResult {
     /// Counts of Pearls grouped by status.
@@ -179,7 +179,7 @@ pub struct BlockedChain {
     pub blockers: Vec<Pearl>,
 }
 
-/// Input parameters for the `pearls_transition_safe` tool.
+/// Input parameters for the `transition_safe` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct TransitionSafeInput {
     /// Pearl ID (full or partial).
@@ -188,7 +188,7 @@ pub struct TransitionSafeInput {
     pub status: String,
 }
 
-/// Output payload for the `pearls_transition_safe` tool.
+/// Output payload for the `transition_safe` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct TransitionSafeResult {
     /// Whether the transition was applied.

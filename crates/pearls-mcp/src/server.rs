@@ -680,7 +680,7 @@ impl PearlsMcp {
     }
 
     /// Returns the next recommended Pearl and blocker context.
-    #[tool(name = "pearls_next_action", description = "Return the next recommended Pearl.")]
+    #[tool(name = "next_action", description = "Return the next recommended Pearl.")]
     async fn next_action(
         &self,
         _params: Parameters<EmptyInput>,
@@ -693,7 +693,7 @@ impl PearlsMcp {
     }
 
     /// Returns a compact plan snapshot for the board.
-    #[tool(name = "pearls_plan_snapshot", description = "Return a compact plan snapshot.")]
+    #[tool(name = "plan_snapshot", description = "Return a compact plan snapshot.")]
     async fn plan_snapshot(
         &self,
         params: Parameters<PlanSnapshotInput>,
@@ -706,7 +706,7 @@ impl PearlsMcp {
     }
 
     /// Attempts a safe transition and returns blockers if denied.
-    #[tool(name = "pearls_transition_safe", description = "Safely transition a Pearl status.")]
+    #[tool(name = "transition_safe", description = "Safely transition a Pearl status.")]
     async fn transition_safe(
         &self,
         params: Parameters<TransitionSafeInput>,

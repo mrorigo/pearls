@@ -55,9 +55,9 @@ Currently available MCP tools:
 - `update`: update a Pearl.
 - `close`: close a Pearl.
 - `ready`: list the ready queue.
-- `pearls_next_action`: get the next recommended Pearl plus blockers context.
-- `pearls_plan_snapshot`: get a compact board summary.
-- `pearls_transition_safe`: attempt a status transition and return blockers if denied.
+- `next_action`: get the next recommended Pearl plus blockers context.
+- `plan_snapshot`: get a compact board summary.
+- `transition_safe`: attempt a status transition and return blockers if denied.
 
 ### MCP Resources
 
