@@ -36,6 +36,16 @@ prl show prl-abc123
 prl show abc
 ```
 
+## MCP Mode
+
+Pearls can run as an MCP stdio server for agent tooling:
+
+```bash
+prl mcp --repo .
+```
+
+This command starts a JSON-RPC MCP server over stdio. Use `--read-only` to disable mutating tools.
+
 ## Concepts
 
 Pearls are issues with:

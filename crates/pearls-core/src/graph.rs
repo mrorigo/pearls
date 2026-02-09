@@ -198,7 +198,7 @@ impl IssueGraph {
 
         // Try to find a cycle by attempting topological sort
         // If it fails, we know there's a cycle
-        if let Err(_) = toposort(graph, None) {
+        if toposort(graph, None).is_err() {
             // Simple cycle detection: do DFS and look for back edges
             for start_node in graph.node_indices() {
                 let mut dfs = Dfs::new(graph, start_node);

@@ -666,6 +666,7 @@ impl Storage {
         let lock_file = OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&lock_path)?;
 
         // Try to acquire exclusive lock with timeout.

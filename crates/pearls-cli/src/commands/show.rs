@@ -122,10 +122,11 @@ fn display_pearl(pearl: pearls_core::Pearl, formatter: &dyn OutputFormatter) -> 
 /// Returns an error if the ID cannot be resolved.
 fn resolve_id(id: &str, storage: &Storage, include_archived: bool) -> Result<String> {
     // If ID is already in full format, validate and return it
-    if id.starts_with("prl-") && (id.len() == 10 || id.len() == 12) {
-        if identity::validate_id_format(id).is_ok() {
-            return Ok(id.to_string());
-        }
+    if id.starts_with("prl-")
+        && (id.len() == 10 || id.len() == 12)
+        && identity::validate_id_format(id).is_ok()
+    {
+        return Ok(id.to_string());
     }
 
     // Load all Pearls for partial ID resolution

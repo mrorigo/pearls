@@ -124,7 +124,7 @@ pub fn execute(
 fn get_default_author() -> Option<String> {
     // Try to get from Git config
     if let Ok(output) = std::process::Command::new("git")
-        .args(&["config", "user.name"])
+        .args(["config", "user.name"])
         .output()
     {
         if output.status.success() {
@@ -154,7 +154,7 @@ fn read_description_from_path(path: &str) -> Result<String> {
 
 fn enforce_description_limit(description: &str) -> Result<()> {
     const MAX_BYTES: usize = 64 * 1024;
-    if description.as_bytes().len() > MAX_BYTES {
+    if description.len() > MAX_BYTES {
         anyhow::bail!("Description exceeds 64KB limit");
     }
     Ok(())

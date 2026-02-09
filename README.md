@@ -46,11 +46,20 @@ prl list --status open --sort updated_at
 prl ready
 ```
 
+## MCP Mode
+
+Run the MCP stdio server for agent clients:
+
+```bash
+prl mcp --repo .
+```
+
 ## Core Commands
 
 - `prl init`: initialize `.pearls`, hooks, and Git merge integration
 - `prl create`, `prl update`, `prl close`: lifecycle operations
 - `prl list`, `prl show`, `prl ready`: discovery and execution flow
+- `prl mcp`: MCP stdio server for agent tooling
 - `prl link`, `prl unlink`: dependency management
 - `prl comments`: add, list, and delete issue comments
 - `prl meta`: structured per-issue metadata
@@ -67,12 +76,20 @@ prl ready
 - Deep architecture: `docs/PEARLS.md`
 - End-to-end sample: `examples/WORKFLOW.md`
 
+## Agent Skill
+
+There is an agent skill defined for using the CLI, see `skills/pearls-cli`.
+
+> Do not give your agent both the CLI skill and the MCP server, or the agent might get confused!
+
 ## Project Layout
 
-This workspace ships four crates:
+This workspace ships six crates:
 
 - `crates/pearls-core`: models, storage, graph, FSM, identity
 - `crates/pearls-cli`: `prl` command-line application
+- `crates/pearls-app`: shared application services
+- `crates/pearls-mcp`: MCP stdio server implementation
 - `crates/pearls-merge`: semantic JSONL merge engine
 - `crates/pearls-hooks`: pre-commit and post-merge validations
 

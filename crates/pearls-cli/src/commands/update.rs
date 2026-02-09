@@ -33,6 +33,7 @@ use std::path::Path;
 /// - The Pearl is not found
 /// - The new values fail validation
 /// - The file cannot be written
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     id: String,
     title: Option<String>,
@@ -137,7 +138,7 @@ pub fn execute(
     } else {
         println!("✓ Updated Pearl: {}", pearl.id);
         println!("  Title: {}", pearl.title);
-        if pearl.description.len() > 0 {
+        if !pearl.description.is_empty() {
             println!("  Description: {}", pearl.description);
         }
         println!("  Priority: {}", pearl.priority);
@@ -163,7 +164,7 @@ fn read_description_from_path(path: &str) -> Result<String> {
 
 fn enforce_description_limit(description: &str) -> Result<()> {
     const MAX_BYTES: usize = 64 * 1024;
-    if description.as_bytes().len() > MAX_BYTES {
+    if description.len() > MAX_BYTES {
         anyhow::bail!("Description exceeds 64KB limit");
     }
     Ok(())

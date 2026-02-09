@@ -100,10 +100,11 @@ pub fn execute(from: String, to: String, dep_type: String) -> Result<()> {
 }
 
 fn resolve_id(id: &str, pearls: &[pearls_core::Pearl]) -> Result<String> {
-    if id.starts_with("prl-") && (id.len() == 10 || id.len() == 12) {
-        if identity::validate_id_format(id).is_ok() {
-            return Ok(id.to_string());
-        }
+    if id.starts_with("prl-")
+        && (id.len() == 10 || id.len() == 12)
+        && identity::validate_id_format(id).is_ok()
+    {
+        return Ok(id.to_string());
     }
 
     identity::resolve_partial_id(id, pearls).map_err(|e| anyhow::anyhow!("{}", e))

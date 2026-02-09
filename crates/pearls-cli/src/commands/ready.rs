@@ -1,4 +1,4 @@
-// Rust guideline compliant 2026-02-06
+// Rust guideline compliant 2026-02-09
 
 //! Implementation of the `prl ready` command.
 //!
@@ -7,8 +7,7 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
-use pearls_core::Storage;
-use std::path::Path;
+use pearls_app::{ready_queue, RepoContext};
 
 /// Displays the ready queue of unblocked Pearls.
 ///
@@ -27,18 +26,11 @@ use std::path::Path;
 /// - The JSONL file cannot be read
 /// - The dependency graph contains cycles
 pub fn execute(limit: Option<usize>) -> Result<()> {
-    let pearls_dir = Path::new(".pearls");
+    let repo = RepoContext::discover(None)?;
+    let storage = repo.open_storage()?;
+    let pearls = storage.load_all()?;
 
-    // Verify .pearls directory exists
-    if !pearls_dir.exists() {
-        anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
-    }
-
-    // Load all Pearls
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let all_pearls = storage.load_all()?;
-
-    if all_pearls.is_empty() {
+    if pearls.is_empty() {
         if is_json_output() {
             println!(
                 "{}",
@@ -54,11 +46,7 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
         return Ok(());
     }
 
-    // Build the dependency graph
-    let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
-
-    // Get the ready queue
-    let ready = graph.ready_queue();
+    let ready = ready_queue(pearls)?;
 
     if ready.is_empty() {
         if is_json_output() {
@@ -77,7 +65,6 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
         return Ok(());
     }
 
-    // Apply limit if specified
     let display_ready: Vec<_> = ready.iter().take(limit.unwrap_or(usize::MAX)).collect();
 
     if is_json_output() {

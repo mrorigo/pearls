@@ -104,6 +104,12 @@ fn add_file_and_commit(repo: &Repository, path: &Path, content: &str, message: &
     create_commit(repo, message);
 }
 
+fn head_refspec(repo: &Repository) -> String {
+    let head = repo.head().expect("Failed to read HEAD");
+    let name = head.name().expect("Failed to read HEAD name");
+    format!("{name}:{name}")
+}
+
 struct CaptureFormatter {
     captured: Arc<Mutex<Vec<Pearl>>>,
 }
@@ -912,7 +918,7 @@ fn test_sync_dry_run() {
     {
         let mut remote = repo.find_remote("origin").expect("Failed to find remote");
         remote
-            .push(&["refs/heads/master:refs/heads/master"], None)
+            .push(&[head_refspec(&repo)], None)
             .expect("Failed to push");
     }
 
@@ -938,7 +944,7 @@ fn test_sync_pushes_to_remote() {
     {
         let mut remote = repo.find_remote("origin").expect("Failed to find remote");
         remote
-            .push(&["refs/heads/master:refs/heads/master"], None)
+            .push(&[head_refspec(&repo)], None)
             .expect("Failed to push");
     }
 

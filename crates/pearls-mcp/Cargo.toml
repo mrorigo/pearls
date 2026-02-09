@@ -1,0 +1,20 @@
+[package]
+name = "pearls-mcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pearls-app = { path = "../pearls-app" }
+pearls-core = { path = "../pearls-core" }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io", "schemars"] }
+schemars = "1.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "macros", "io-std", "sync"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["fmt", "json"] }

@@ -35,7 +35,7 @@ impl ProgressReporter {
     ///
     /// * `current` - Current item count processed (1-based)
     pub fn report(&self, current: usize) {
-        if current % self.interval != 0 {
+        if !current.is_multiple_of(self.interval) {
             return;
         }
 

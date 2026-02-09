@@ -267,6 +267,25 @@ enum Commands {
         output: Option<String>,
     },
 
+    /// Run Pearls MCP server over stdio
+    Mcp {
+        /// Repository root path
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Disable mutating tools
+        #[arg(long)]
+        read_only: bool,
+
+        /// Log level (error, warn, info, debug)
+        #[arg(long, default_value = "info", value_parser = ["error", "warn", "info", "debug"])]
+        log_level: String,
+
+        /// Optional log file path
+        #[arg(long)]
+        log_file: Option<String>,
+    },
+
     /// Import from other formats
     Import {
         #[command(subcommand)]
@@ -483,6 +502,20 @@ fn main() -> anyhow::Result<()> {
             output,
         }) => {
             commands::merge::execute(ancestor, current, other, output)?;
+        }
+        Some(Commands::Mcp {
+            repo,
+            read_only,
+            log_level,
+            log_file,
+        }) => {
+            let options = pearls_mcp::McpOptions {
+                repo: repo.map(std::path::PathBuf::from),
+                read_only,
+                log_level,
+                log_file: log_file.map(std::path::PathBuf::from),
+            };
+            pearls_mcp::run(options).map_err(|err| anyhow::anyhow!("{err}"))?;
         }
         Some(Commands::Import { source }) => match source {
             ImportSource::Beads { path } => {

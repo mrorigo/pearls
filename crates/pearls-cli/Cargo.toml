@@ -15,9 +15,11 @@ name = "prl"
 path = "src/main.rs"
 
 [dependencies]
+pearls-app = { path = "../pearls-app" }
 pearls-core = { path = "../pearls-core" }
 pearls-hooks = { path = "../pearls-hooks" }
 pearls-merge = { path = "../pearls-merge" }
+pearls-mcp = { path = "../pearls-mcp" }
 clap = { workspace = true }
 tabled = { workspace = true }
 serde = { workspace = true }

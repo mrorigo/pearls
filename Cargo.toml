@@ -4,7 +4,7 @@ members = [
     "crates/pearls-core",
     "crates/pearls-cli",
     "crates/pearls-merge",
-    "crates/pearls-hooks",
+    "crates/pearls-hooks", "crates/pearls-app", "crates/pearls-mcp",
 ]
 
 [workspace.package]
@@ -50,3 +50,6 @@ fs2 = "0.4"
 
 # Time
 chrono = "0.4"
+
+# MCP protocol
+rmcp = "0.14.0"
