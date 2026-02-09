@@ -5,10 +5,10 @@
 use crate::types::{
     BlockedChain, CloseInput, CloseResult, CommentsAddInput, CommentsAddResult, CommentsDeleteInput,
     CommentsDeleteResult, CommentsListInput, CommentsListResult, CreateInput, CreateResult,
-    EmptyInput, LinkInput, LinkResult, ListInput, ListResult, NextActionResult, PlanSnapshotInput,
-    PlanSnapshotResult, ReadyInput, ReadyResource, ShowInput, ShowResult, StatusCount,
-    TransitionSafeInput, TransitionSafeResult, UnlinkInput, UnlinkResult, UpdateInput,
-    UpdateResult,
+    EmptyInput, LinkInput, LinkItem, LinkResult, ListInput, ListResult,
+    NextActionResult, PlanSnapshotInput, PlanSnapshotResult, ReadyInput, ReadyResource, ShowInput,
+    ShowResult, StatusCount, TransitionSafeInput, TransitionSafeResult, UnlinkInput, UnlinkItem,
+    UnlinkResult, UpdateInput, UpdateResult,
 };
 use pearls_app::{
     list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
@@ -223,46 +223,58 @@ impl PearlsMcp {
             ));
         }
 
-        if input.title.trim().is_empty() {
-            return Err(AppError::InvalidInput("Title cannot be empty".to_string()));
+        if input.items.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Create request must include at least one item".to_string(),
+            ));
         }
 
         let repo = self.repo_context()?;
         let config = repo.load_config()?;
-        let author = input
-            .author
-            .or_else(default_author)
-            .unwrap_or_else(|| "unknown".to_string());
+        let mut created = Vec::new();
 
-        let mut pearl = pearls_core::Pearl::new(input.title, author);
-
-        if let Some(description) = input.description {
-            enforce_description_limit(&description)?;
-            pearl.description = description;
-        }
-
-        if let Some(priority) = input.priority {
-            if priority > 4 {
-                return Err(AppError::InvalidInput(format!(
-                    "Priority must be 0-4, got {}",
-                    priority
-                )));
+        for item in input.items {
+            if item.title.trim().is_empty() {
+                return Err(AppError::InvalidInput("Title cannot be empty".to_string()));
             }
-            pearl.priority = priority;
-        } else {
-            pearl.priority = config.default_priority;
-        }
 
-        if let Some(labels) = input.labels {
-            pearl.labels = labels;
-        }
+            let author = item
+                .author
+                .or_else(default_author)
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut pearl = pearls_core::Pearl::new(item.title, author);
 
-        pearl.validate()?;
+            if let Some(description) = item.description {
+                enforce_description_limit(&description)?;
+                pearl.description = description;
+            }
+
+            if let Some(priority) = item.priority {
+                if priority > 4 {
+                    return Err(AppError::InvalidInput(format!(
+                        "Priority must be 0-4, got {}",
+                        priority
+                    )));
+                }
+                pearl.priority = priority;
+            } else {
+                pearl.priority = config.default_priority;
+            }
+
+            if let Some(labels) = item.labels {
+                pearl.labels = labels;
+            }
+
+            pearl.validate()?;
+            created.push(pearl);
+        }
 
         let mut storage = repo.open_storage()?;
-        storage.save(&pearl)?;
+        for pearl in &created {
+            storage.save(pearl)?;
+        }
 
-        Ok(CreateResult { pearl })
+        Ok(CreateResult { pearls: created })
     }
 
     fn show_tool(&self, input: ShowInput) -> Result<ShowResult, AppError> {
@@ -485,39 +497,53 @@ impl PearlsMcp {
             ));
         }
 
-        let dep_type = parse_dep_type(&input.dep_type)?;
+        if input.links.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Link request must include at least one link".to_string(),
+            ));
+        }
+
         let repo = self.repo_context()?;
         let mut storage = repo.open_storage()?;
         let mut pearls = storage.load_all()?;
-        let from_id = resolve_pearl_id(&input.from, &pearls)?;
-        let to_id = resolve_pearl_id(&input.to, &pearls)?;
+        let mut resolved = Vec::new();
 
-        let from_index = pearls
-            .iter()
-            .position(|pearl| pearl.id == from_id)
-            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+        for link in input.links {
+            let dep_type = parse_dep_type(&link.dep_type)?;
+            let from_id = resolve_pearl_id(&link.from, &pearls)?;
+            let to_id = resolve_pearl_id(&link.to, &pearls)?;
 
-        let mut updated = pearls[from_index].clone();
-        if !updated
-            .deps
-            .iter()
-            .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
-        {
-            updated.deps.push(pearls_core::Dependency {
-                target_id: to_id.clone(),
-                dep_type,
+            let from_index = pearls
+                .iter()
+                .position(|pearl| pearl.id == from_id)
+                .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+
+            let mut updated = pearls[from_index].clone();
+            if !updated
+                .deps
+                .iter()
+                .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
+            {
+                updated.deps.push(pearls_core::Dependency {
+                    target_id: to_id.clone(),
+                    dep_type,
+                });
+            }
+
+            pearls[from_index] = updated.clone();
+            resolved.push(LinkItem {
+                from: from_id,
+                to: to_id,
+                dep_type: link.dep_type,
             });
         }
 
-        pearls[from_index] = updated.clone();
         pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        storage.save(&updated)?;
+        for pearl in &pearls {
+            storage.save(pearl)?;
+        }
 
-        Ok(LinkResult {
-            from: from_id,
-            to: to_id,
-            dep_type: input.dep_type,
-        })
+        Ok(LinkResult { links: resolved })
     }
 
     fn unlink_tool(&self, input: UnlinkInput) -> Result<UnlinkResult, AppError> {
@@ -527,28 +553,46 @@ impl PearlsMcp {
             ));
         }
 
+        if input.links.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Unlink request must include at least one link".to_string(),
+            ));
+        }
+
         let repo = self.repo_context()?;
         let mut storage = repo.open_storage()?;
         let mut pearls = storage.load_all()?;
-        let from_id = resolve_pearl_id(&input.from, &pearls)?;
-        let to_id = resolve_pearl_id(&input.to, &pearls)?;
+        let mut resolved = Vec::new();
+        let mut removed = 0usize;
 
-        let from_index = pearls
-            .iter()
-            .position(|pearl| pearl.id == from_id)
-            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+        for link in input.links {
+            let from_id = resolve_pearl_id(&link.from, &pearls)?;
+            let to_id = resolve_pearl_id(&link.to, &pearls)?;
 
-        let mut updated = pearls[from_index].clone();
-        let before = updated.deps.len();
-        updated.deps.retain(|dep| dep.target_id != to_id);
-        let removed = before.saturating_sub(updated.deps.len());
-        pearls[from_index] = updated.clone();
+            let from_index = pearls
+                .iter()
+                .position(|pearl| pearl.id == from_id)
+                .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
+
+            let mut updated = pearls[from_index].clone();
+            let before = updated.deps.len();
+            updated.deps.retain(|dep| dep.target_id != to_id);
+            removed += before.saturating_sub(updated.deps.len());
+            pearls[from_index] = updated.clone();
+
+            resolved.push(UnlinkItem {
+                from: from_id,
+                to: to_id,
+            });
+        }
+
         pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        storage.save(&updated)?;
+        for pearl in &pearls {
+            storage.save(pearl)?;
+        }
 
         Ok(UnlinkResult {
-            from: from_id,
-            to: to_id,
+            links: resolved,
             removed,
         })
     }
@@ -874,7 +918,7 @@ impl PearlsMcp {
     }
 
     /// Links two Pearls with a dependency.
-    #[tool(description = "Link two Pearls with a dependency.")]
+    #[tool(description = "Link Pearls with a dependency (from depends on to).")]
     async fn link(
         &self,
         params: Parameters<LinkInput>,
@@ -1152,6 +1196,7 @@ impl PearlsMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::CreateItem;
     use pearls_core::{Config, Status};
     use std::fs;
     use tempfile::TempDir;
@@ -1191,17 +1236,19 @@ mod tests {
 
         let created = server
             .create_tool(CreateInput {
-                title: "Test Pearl".to_string(),
-                description: Some("Desc".to_string()),
-                priority: Some(1),
-                labels: Some(vec!["test".to_string()]),
-                author: Some("tester".to_string()),
+                items: vec![CreateItem {
+                    title: "Test Pearl".to_string(),
+                    description: Some("Desc".to_string()),
+                    priority: Some(1),
+                    labels: Some(vec!["test".to_string()]),
+                    author: Some("tester".to_string()),
+                }],
             })
             .expect("create failed");
 
         let comment = server
             .comments_add_tool(CommentsAddInput {
-                id: created.pearl.id.clone(),
+                id: created.pearls[0].id.clone(),
                 body: "Hello".to_string(),
                 author: Some("tester".to_string()),
             })
@@ -1209,7 +1256,7 @@ mod tests {
 
         let show = server
             .show_tool(ShowInput {
-                id: created.pearl.id[..5].to_string(),
+                id: created.pearls[0].id[..5].to_string(),
                 include_archived: Some(false),
             })
             .expect("show failed");
@@ -1251,17 +1298,19 @@ mod tests {
 
         let created = server
             .create_tool(CreateInput {
-                title: "Comment Pearl".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
+                items: vec![CreateItem {
+                    title: "Comment Pearl".to_string(),
+                    description: None,
+                    priority: None,
+                    labels: None,
+                    author: None,
+                }],
             })
             .expect("create failed");
 
         let added = server
             .comments_add_tool(CommentsAddInput {
-                id: created.pearl.id.clone(),
+                id: created.pearls[0].id.clone(),
                 body: "First".to_string(),
                 author: None,
             })
@@ -1269,7 +1318,7 @@ mod tests {
 
         let list = server
             .comments_list_tool(CommentsListInput {
-                id: created.pearl.id.clone(),
+                id: created.pearls[0].id.clone(),
             })
             .expect("comment list failed");
         assert_eq!(list.total, 1);
@@ -1277,7 +1326,7 @@ mod tests {
 
         let deleted = server
             .comments_delete_tool(CommentsDeleteInput {
-                id: created.pearl.id.clone(),
+                id: created.pearls[0].id.clone(),
                 comment_id: added.comment_id[..5].to_string(),
             })
             .expect("comment delete failed");
@@ -1285,7 +1334,7 @@ mod tests {
 
         let list = server
             .comments_list_tool(CommentsListInput {
-                id: created.pearl.id,
+                id: created.pearls[0].id.clone(),
             })
             .expect("comment list failed");
         assert_eq!(list.total, 0);
@@ -1296,55 +1345,82 @@ mod tests {
         let temp = init_repo();
         let server = server_for(&temp);
 
-        let from = server
+        let created = server
             .create_tool(CreateInput {
-                title: "Parent".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
+                items: vec![
+                    CreateItem {
+                        title: "Parent".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: None,
+                    },
+                    CreateItem {
+                        title: "Child".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: None,
+                    },
+                    CreateItem {
+                        title: "Peer".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: None,
+                    },
+                ],
             })
             .expect("create failed");
-
-        let to = server
-            .create_tool(CreateInput {
-                title: "Child".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
-            })
-            .expect("create failed");
+        let from_id = created.pearls[0].id.clone();
+        let to_id = created.pearls[1].id.clone();
+        let peer_id = created.pearls[2].id.clone();
 
         let link = server
             .link_tool(LinkInput {
-                from: from.pearl.id.clone(),
-                to: to.pearl.id.clone(),
-                dep_type: "blocks".to_string(),
+                links: vec![
+                    LinkItem {
+                        from: from_id.clone(),
+                        to: to_id.clone(),
+                        dep_type: "blocks".to_string(),
+                    },
+                    LinkItem {
+                        from: from_id.clone(),
+                        to: peer_id.clone(),
+                        dep_type: "related".to_string(),
+                    },
+                ],
             })
             .expect("link failed");
-        assert_eq!(link.from, from.pearl.id);
-        assert_eq!(link.to, to.pearl.id);
+        assert_eq!(link.links.len(), 2);
 
         let list = server
             .show_tool(ShowInput {
-                id: from.pearl.id.clone(),
+                id: from_id.clone(),
                 include_archived: Some(false),
             })
             .expect("show failed");
-        assert_eq!(list.pearl.deps.len(), 1);
+        assert_eq!(list.pearl.deps.len(), 2);
 
         let unlink = server
             .unlink_tool(UnlinkInput {
-                from: from.pearl.id.clone(),
-                to: to.pearl.id.clone(),
+                links: vec![
+                    UnlinkItem {
+                        from: from_id.clone(),
+                        to: to_id.clone(),
+                    },
+                    UnlinkItem {
+                        from: from_id.clone(),
+                        to: peer_id.clone(),
+                    },
+                ],
             })
             .expect("unlink failed");
-        assert_eq!(unlink.removed, 1);
+        assert_eq!(unlink.removed, 2);
 
         let list = server
             .show_tool(ShowInput {
-                id: from.pearl.id,
+                id: from_id,
                 include_archived: Some(false),
             })
             .expect("show failed");
@@ -1358,11 +1434,13 @@ mod tests {
 
         let created = server
             .create_tool(CreateInput {
-                title: "Resource Pearl".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
+                items: vec![CreateItem {
+                    title: "Resource Pearl".to_string(),
+                    description: None,
+                    priority: None,
+                    labels: None,
+                    author: None,
+                }],
             })
             .expect("create failed");
 
@@ -1372,12 +1450,12 @@ mod tests {
         let ready_text = extract_text(ready);
         assert!(ready_text.contains("ready"));
 
-        let resource_uri = format!("pearls://{}", created.pearl.id);
+        let resource_uri = format!("pearls://{}", created.pearls[0].id);
         let pearl = server
             .read_resource_by_uri(&resource_uri)
             .expect("pearl resource failed");
         let pearl_text = extract_text(pearl);
-        assert!(pearl_text.contains(&created.pearl.id));
+        assert!(pearl_text.contains(&created.pearls[0].id));
     }
 
     #[test]
@@ -1391,11 +1469,13 @@ mod tests {
         });
 
         let result = server.create_tool(CreateInput {
-            title: "Blocked".to_string(),
-            description: None,
-            priority: None,
-            labels: None,
-            author: None,
+            items: vec![CreateItem {
+                title: "Blocked".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            }],
         });
 
         assert!(result.is_err());
@@ -1408,16 +1488,18 @@ mod tests {
 
         let first = server
             .create_tool(CreateInput {
-                title: "Ready Pearl".to_string(),
-                description: None,
-                priority: Some(0),
-                labels: None,
-                author: None,
+                items: vec![CreateItem {
+                    title: "Ready Pearl".to_string(),
+                    description: None,
+                    priority: Some(0),
+                    labels: None,
+                    author: None,
+                }],
             })
             .expect("create failed");
 
         let next = server.next_action_tool().expect("next action failed");
-        assert_eq!(next.pearl.as_ref().unwrap().id, first.pearl.id);
+        assert_eq!(next.pearl.as_ref().unwrap().id, first.pearls[0].id);
 
         let snapshot = server
             .plan_snapshot_tool(PlanSnapshotInput { limit: Some(5) })
@@ -1430,40 +1512,43 @@ mod tests {
         let temp = init_repo();
         let server = server_for(&temp);
 
-        let blocker = server
-            .create_tool(CreateInput {
-                title: "Blocker".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
-            })
-            .expect("create failed");
-
         let created = server
             .create_tool(CreateInput {
-                title: "Transition Pearl".to_string(),
-                description: None,
-                priority: None,
-                labels: None,
-                author: None,
+                items: vec![
+                    CreateItem {
+                        title: "Blocker".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: None,
+                    },
+                    CreateItem {
+                        title: "Transition Pearl".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: None,
+                    },
+                ],
             })
             .expect("create failed");
+        let blocker_id = created.pearls[0].id.clone();
+        let transition_id = created.pearls[1].id.clone();
 
         let repo = server.repo_context().expect("repo context");
         let mut storage = repo.open_storage().expect("storage");
         let mut pearl = storage
-            .load_by_id(&created.pearl.id)
+            .load_by_id(&transition_id)
             .expect("load pearl");
         pearl.deps.push(pearls_core::Dependency {
-            target_id: blocker.pearl.id.clone(),
+            target_id: blocker_id.clone(),
             dep_type: pearls_core::DepType::Blocks,
         });
         storage.save(&pearl).expect("save pearl");
 
         let result = server
             .transition_safe_tool(TransitionSafeInput {
-                id: created.pearl.id.clone(),
+                id: transition_id.clone(),
                 status: "closed".to_string(),
             })
             .expect("transition safe failed");

@@ -125,6 +125,42 @@ Example `resources/read` for `pearls://ready`:
 }
 ```
 
+### Batch Inputs
+
+The following tools accept batched inputs:
+- `create`: pass `items` with multiple Pearls to create.
+- `link`: pass `links` with multiple dependencies to add.
+- `unlink`: pass `links` with multiple dependencies to remove.
+
+Example `tools/call` for `create` with multiple items:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "create",
+    "arguments": {
+      "items": [
+        { "title": "Batch A", "priority": 1 },
+        { "title": "Batch B", "priority": 2, "labels": ["docs"] }
+      ]
+    }
+  }
+}
+```
+
+### Dependency Directionality
+
+The `link` tool expects `from` to be the Pearl that depends on `to`.
+
+Example for `blocks`:
+- `from` is blocked by `to` (the blocker).
+- Close `to` to unblock `from`.
+
+When in doubt, call `show` on the `from` Pearl and verify the `deps` list includes the `to` ID. Use `plan_snapshot` to sanity-check ready vs blocked counts after linking.
+
 ## Concepts
 
 Pearls are issues with:

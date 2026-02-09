@@ -46,9 +46,9 @@ pub struct ListResult {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct EmptyInput {}
 
-/// Input parameters for the `create` tool.
+/// Single item input for the `create` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct CreateInput {
+pub struct CreateItem {
     /// Title of the Pearl.
     pub title: String,
     /// Description of the Pearl.
@@ -61,11 +61,18 @@ pub struct CreateInput {
     pub author: Option<String>,
 }
 
+/// Input parameters for the `create` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CreateInput {
+    /// Pearls to create.
+    pub items: Vec<CreateItem>,
+}
+
 /// Output payload for the `create` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateResult {
-    /// Created Pearl.
-    pub pearl: Pearl,
+    /// Created Pearls.
+    pub pearls: Vec<Pearl>,
 }
 
 /// Input parameters for the `show` tool.
@@ -187,9 +194,9 @@ pub struct CommentsDeleteResult {
     pub comment_id: String,
 }
 
-/// Input parameters for the `link` tool.
+/// Single item input for the `link` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct LinkInput {
+pub struct LinkItem {
     /// Source Pearl ID (full or partial).
     pub from: String,
     /// Target Pearl ID (full or partial).
@@ -198,34 +205,42 @@ pub struct LinkInput {
     pub dep_type: String,
 }
 
+/// Input parameters for the `link` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct LinkInput {
+    /// Dependency links to add.
+    pub links: Vec<LinkItem>,
+}
+
 /// Output payload for the `link` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct LinkResult {
-    /// Source Pearl ID.
-    pub from: String,
-    /// Target Pearl ID.
-    pub to: String,
-    /// Dependency type.
-    pub dep_type: String,
+    /// Added links.
+    pub links: Vec<LinkItem>,
 }
 
-/// Input parameters for the `unlink` tool.
+/// Single item input for the `unlink` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
-pub struct UnlinkInput {
+pub struct UnlinkItem {
     /// Source Pearl ID (full or partial).
     pub from: String,
     /// Target Pearl ID (full or partial).
     pub to: String,
 }
 
+/// Input parameters for the `unlink` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct UnlinkInput {
+    /// Dependency links to remove.
+    pub links: Vec<UnlinkItem>,
+}
+
 /// Output payload for the `unlink` tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct UnlinkResult {
-    /// Source Pearl ID.
-    pub from: String,
-    /// Target Pearl ID.
-    pub to: String,
-    /// Removed dependencies count.
+    /// Removed links.
+    pub links: Vec<UnlinkItem>,
+    /// Total removed dependencies count.
     pub removed: usize,
 }
 
