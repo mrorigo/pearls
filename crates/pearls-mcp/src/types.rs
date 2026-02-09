@@ -131,6 +131,62 @@ pub struct ReadyInput {
     pub limit: Option<usize>,
 }
 
+/// Input parameters for the `comments_add` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CommentsAddInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+    /// Comment body text.
+    pub body: String,
+    /// Optional author override.
+    pub author: Option<String>,
+}
+
+/// Output payload for the `comments_add` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct CommentsAddResult {
+    /// Pearl ID.
+    pub id: String,
+    /// New comment ID.
+    pub comment_id: String,
+}
+
+/// Input parameters for the `comments_list` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CommentsListInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+}
+
+/// Output payload for the `comments_list` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct CommentsListResult {
+    /// Pearl ID.
+    pub id: String,
+    /// Comments for the Pearl.
+    pub comments: Vec<pearls_core::Comment>,
+    /// Total number of comments.
+    pub total: usize,
+}
+
+/// Input parameters for the `comments_delete` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CommentsDeleteInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+    /// Comment ID (full or partial).
+    pub comment_id: String,
+}
+
+/// Output payload for the `comments_delete` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct CommentsDeleteResult {
+    /// Pearl ID.
+    pub id: String,
+    /// Deleted comment ID.
+    pub comment_id: String,
+}
+
 /// Input parameters for the `plan_snapshot` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct PlanSnapshotInput {

@@ -55,6 +55,9 @@ Currently available MCP tools:
 - `update`: update a Pearl.
 - `close`: close a Pearl.
 - `ready`: list the ready queue.
+- `comments_add`: add a comment to a Pearl.
+- `comments_list`: list comments for a Pearl.
+- `comments_delete`: delete a comment from a Pearl.
 - `next_action`: get the next recommended Pearl plus blockers context.
 - `plan_snapshot`: get a compact board summary.
 - `transition_safe`: attempt a status transition and return blockers if denied.

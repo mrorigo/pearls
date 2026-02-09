@@ -3,10 +3,11 @@
 //! MCP server runtime for Pearls.
 
 use crate::types::{
-    BlockedChain, CloseInput, CloseResult, CreateInput, CreateResult, EmptyInput, ListInput,
-    ListResult, NextActionResult, PlanSnapshotInput, PlanSnapshotResult, ReadyInput, ReadyResource,
-    ShowInput, ShowResult, StatusCount, TransitionSafeInput, TransitionSafeResult, UpdateInput,
-    UpdateResult,
+    BlockedChain, CloseInput, CloseResult, CommentsAddInput, CommentsAddResult, CommentsDeleteInput,
+    CommentsDeleteResult, CommentsListInput, CommentsListResult, CreateInput, CreateResult,
+    EmptyInput, ListInput, ListResult, NextActionResult, PlanSnapshotInput, PlanSnapshotResult,
+    ReadyInput, ReadyResource, ShowInput, ShowResult, StatusCount, TransitionSafeInput,
+    TransitionSafeResult, UpdateInput, UpdateResult,
 };
 use pearls_app::{
     list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
@@ -398,6 +399,84 @@ impl PearlsMcp {
         })
     }
 
+    fn comments_add_tool(&self, input: CommentsAddInput) -> Result<CommentsAddResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
+
+        let author = input
+            .author
+            .or_else(default_author)
+            .unwrap_or_else(|| "unknown".to_string());
+        let comment_id = pearl
+            .add_comment(author, input.body)
+            .map_err(AppError::from)?;
+        pearl.validate()?;
+        storage.save(&pearl)?;
+
+        Ok(CommentsAddResult {
+            id: pearl.id,
+            comment_id,
+        })
+    }
+
+    fn comments_list_tool(
+        &self,
+        input: CommentsListInput,
+    ) -> Result<CommentsListResult, AppError> {
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let pearl = storage.load_by_id(&full_id)?;
+
+        Ok(CommentsListResult {
+            id: pearl.id,
+            comments: pearl.comments.clone(),
+            total: pearl.comments.len(),
+        })
+    }
+
+    fn comments_delete_tool(
+        &self,
+        input: CommentsDeleteInput,
+    ) -> Result<CommentsDeleteResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
+
+        let resolved_comment_id = resolve_comment_id(&input.comment_id, &pearl.comments)?;
+        if !pearl.delete_comment(&resolved_comment_id) {
+            return Err(AppError::InvalidInput(format!(
+                "Comment '{}' not found for Pearl {}",
+                resolved_comment_id, pearl.id
+            )));
+        }
+        pearl.validate()?;
+        storage.save(&pearl)?;
+
+        Ok(CommentsDeleteResult {
+            id: pearl.id,
+            comment_id: resolved_comment_id,
+        })
+    }
+
     fn list_tool(&self, input: ListInput) -> Result<ListResult, AppError> {
         let pearls = self.load_all_pearls(input.include_archived.unwrap_or(false))?;
 
@@ -679,6 +758,45 @@ impl PearlsMcp {
         Ok(CallToolResult::success(vec![Content::text(payload)]))
     }
 
+    /// Adds a comment to a Pearl.
+    #[tool(name = "comments_add", description = "Add a comment to a Pearl.")]
+    async fn comments_add(
+        &self,
+        params: Parameters<CommentsAddInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.comments_add_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Lists comments for a Pearl.
+    #[tool(name = "comments_list", description = "List comments for a Pearl.")]
+    async fn comments_list(
+        &self,
+        params: Parameters<CommentsListInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.comments_list_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Deletes a comment from a Pearl.
+    #[tool(name = "comments_delete", description = "Delete a comment from a Pearl.")]
+    async fn comments_delete(
+        &self,
+        params: Parameters<CommentsDeleteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.comments_delete_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
     /// Returns the next recommended Pearl and blocker context.
     #[tool(name = "next_action", description = "Return the next recommended Pearl.")]
     async fn next_action(
@@ -832,6 +950,36 @@ fn enforce_description_limit(description: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+fn resolve_comment_id(
+    partial: &str,
+    comments: &[pearls_core::Comment],
+) -> Result<String, AppError> {
+    if partial.len() < 3 {
+        return Err(AppError::InvalidInput(
+            "Comment ID must be at least 3 characters".to_string(),
+        ));
+    }
+
+    let matches: Vec<&str> = comments
+        .iter()
+        .filter(|comment| comment.id.starts_with(partial))
+        .map(|comment| comment.id.as_str())
+        .collect();
+
+    match matches.len() {
+        0 => Err(AppError::InvalidInput(format!(
+            "Comment '{}' not found",
+            partial
+        ))),
+        1 => Ok(matches[0].to_string()),
+        _ => Err(AppError::InvalidInput(format!(
+            "Ambiguous comment ID '{}': matches {}",
+            partial,
+            matches.join(", ")
+        ))),
+    }
+}
+
 impl PearlsMcp {
     fn read_resource_by_uri(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
         if uri == "pearls://ready" {
@@ -949,6 +1097,14 @@ mod tests {
             })
             .expect("create failed");
 
+        let comment = server
+            .comments_add_tool(CommentsAddInput {
+                id: created.pearl.id.clone(),
+                body: "Hello".to_string(),
+                author: Some("tester".to_string()),
+            })
+            .expect("comment add failed");
+
         let show = server
             .show_tool(ShowInput {
                 id: created.pearl.id[..5].to_string(),
@@ -956,6 +1112,8 @@ mod tests {
             })
             .expect("show failed");
         assert_eq!(show.pearl.title, "Test Pearl");
+        assert_eq!(show.pearl.comments.len(), 1);
+        assert_eq!(show.pearl.comments[0].id, comment.comment_id);
 
         let updated = server
             .update_tool(UpdateInput {
@@ -982,6 +1140,53 @@ mod tests {
             .ready_tool(ReadyInput { limit: None })
             .expect("ready failed");
         assert!(ready.ready.is_empty());
+    }
+
+    #[test]
+    fn test_comments_list_and_delete() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let created = server
+            .create_tool(CreateInput {
+                title: "Comment Pearl".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let added = server
+            .comments_add_tool(CommentsAddInput {
+                id: created.pearl.id.clone(),
+                body: "First".to_string(),
+                author: None,
+            })
+            .expect("comment add failed");
+
+        let list = server
+            .comments_list_tool(CommentsListInput {
+                id: created.pearl.id.clone(),
+            })
+            .expect("comment list failed");
+        assert_eq!(list.total, 1);
+        assert_eq!(list.comments[0].id, added.comment_id);
+
+        let deleted = server
+            .comments_delete_tool(CommentsDeleteInput {
+                id: created.pearl.id.clone(),
+                comment_id: added.comment_id[..5].to_string(),
+            })
+            .expect("comment delete failed");
+        assert_eq!(deleted.comment_id, added.comment_id);
+
+        let list = server
+            .comments_list_tool(CommentsListInput {
+                id: created.pearl.id,
+            })
+            .expect("comment list failed");
+        assert_eq!(list.total, 0);
     }
 
     #[test]
