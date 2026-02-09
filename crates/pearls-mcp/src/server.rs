@@ -782,68 +782,7 @@ impl rmcp::ServerHandler for PearlsMcp {
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        if request.uri.as_str() == "pearls://ready" {
-            let ready = self.ready_resource().map_err(map_app_error)?;
-            let payload = serde_json::to_string(&ready).map_err(|err| {
-                ErrorData::internal_error(
-                    "Failed to serialize resource",
-                    Some(err.to_string().into()),
-                )
-            })?;
-
-            let contents = ResourceContents::TextResourceContents {
-                uri: "pearls://ready".to_string(),
-                mime_type: Some("application/json".to_string()),
-                text: payload,
-                meta: None,
-            };
-
-            return Ok(ReadResourceResult {
-                contents: vec![contents],
-            });
-        }
-
-        if let Some(id) = request.uri.as_str().strip_prefix("pearls://") {
-            if let Some(id) = id.strip_prefix("prl-") {
-                let id = format!("prl-{}", id);
-                let pearls = self.load_all_pearls(true).map_err(map_app_error)?;
-                let full_id = resolve_pearl_id(&id, &pearls).map_err(map_app_error)?;
-                let pearl = pearls
-                    .into_iter()
-                    .find(|pearl| pearl.id == full_id)
-                    .ok_or_else(|| {
-                        ErrorData::resource_not_found(
-                            "Pearl not found",
-                            Some(serde_json::json!({ "id": full_id })),
-                        )
-                    })?;
-
-                let payload = serde_json::to_string(&pearl).map_err(|err| {
-                    ErrorData::internal_error(
-                        "Failed to serialize resource",
-                        Some(err.to_string().into()),
-                    )
-                })?;
-
-                let contents = ResourceContents::TextResourceContents {
-                    uri: request.uri.to_string(),
-                    mime_type: Some("application/json".to_string()),
-                    text: payload,
-                    meta: None,
-                };
-
-                return Ok(ReadResourceResult {
-                    contents: vec![contents],
-                });
-            }
-        }
-
-        Err(ErrorData::resource_not_found(
-            "Resource not found",
-            Some(serde_json::json!({
-                "uri": request.uri,
-            })),
-        ))
+        self.read_resource_by_uri(request.uri.as_str())
     }
 }
 
@@ -891,4 +830,290 @@ fn enforce_description_limit(description: &str) -> Result<(), AppError> {
         ));
     }
     Ok(())
+}
+
+impl PearlsMcp {
+    fn read_resource_by_uri(&self, uri: &str) -> Result<ReadResourceResult, ErrorData> {
+        if uri == "pearls://ready" {
+            let ready = self.ready_resource().map_err(map_app_error)?;
+            let payload = serde_json::to_string(&ready).map_err(|err| {
+                ErrorData::internal_error(
+                    "Failed to serialize resource",
+                    Some(err.to_string().into()),
+                )
+            })?;
+
+            let contents = ResourceContents::TextResourceContents {
+                uri: "pearls://ready".to_string(),
+                mime_type: Some("application/json".to_string()),
+                text: payload,
+                meta: None,
+            };
+
+            return Ok(ReadResourceResult {
+                contents: vec![contents],
+            });
+        }
+
+        if let Some(id) = uri.strip_prefix("pearls://") {
+            if let Some(id) = id.strip_prefix("prl-") {
+                let id = format!("prl-{}", id);
+                let pearls = self.load_all_pearls(true).map_err(map_app_error)?;
+                let full_id = resolve_pearl_id(&id, &pearls).map_err(map_app_error)?;
+                let pearl = pearls
+                    .into_iter()
+                    .find(|pearl| pearl.id == full_id)
+                    .ok_or_else(|| {
+                        ErrorData::resource_not_found(
+                            "Pearl not found",
+                            Some(serde_json::json!({ "id": full_id })),
+                        )
+                    })?;
+
+                let payload = serde_json::to_string(&pearl).map_err(|err| {
+                    ErrorData::internal_error(
+                        "Failed to serialize resource",
+                        Some(err.to_string().into()),
+                    )
+                })?;
+
+                let contents = ResourceContents::TextResourceContents {
+                    uri: uri.to_string(),
+                    mime_type: Some("application/json".to_string()),
+                    text: payload,
+                    meta: None,
+                };
+
+                return Ok(ReadResourceResult {
+                    contents: vec![contents],
+                });
+            }
+        }
+
+        Err(ErrorData::resource_not_found(
+            "Resource not found",
+            Some(serde_json::json!({
+                "uri": uri,
+            })),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pearls_core::{Config, Status};
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn init_repo() -> TempDir {
+        let temp = TempDir::new().expect("Failed to create temp dir");
+        let pearls_dir = temp.path().join(".pearls");
+        fs::create_dir(&pearls_dir).expect("Failed to create .pearls dir");
+        fs::File::create(pearls_dir.join("issues.jsonl")).expect("Failed to create issues.jsonl");
+        let config = Config::default();
+        config.save(&pearls_dir).expect("Failed to save config");
+        temp
+    }
+
+    fn server_for(temp: &TempDir) -> PearlsMcp {
+        PearlsMcp::new(McpOptions {
+            repo: Some(temp.path().to_path_buf()),
+            read_only: false,
+            log_level: "info".to_string(),
+            log_file: None,
+        })
+    }
+
+    fn extract_text(result: ReadResourceResult) -> String {
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents { text, .. } => text.clone(),
+            ResourceContents::BlobResourceContents { .. } => {
+                panic!("Unexpected blob resource contents")
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_show_update_close_ready() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let created = server
+            .create_tool(CreateInput {
+                title: "Test Pearl".to_string(),
+                description: Some("Desc".to_string()),
+                priority: Some(1),
+                labels: Some(vec!["test".to_string()]),
+                author: Some("tester".to_string()),
+            })
+            .expect("create failed");
+
+        let show = server
+            .show_tool(ShowInput {
+                id: created.pearl.id[..5].to_string(),
+                include_archived: Some(false),
+            })
+            .expect("show failed");
+        assert_eq!(show.pearl.title, "Test Pearl");
+
+        let updated = server
+            .update_tool(UpdateInput {
+                id: show.pearl.id.clone(),
+                title: Some("Updated".to_string()),
+                description: None,
+                priority: Some(2),
+                status: Some("in_progress".to_string()),
+                add_labels: Some(vec!["new".to_string()]),
+                remove_labels: Some(vec!["test".to_string()]),
+            })
+            .expect("update failed");
+        assert_eq!(updated.pearl.title, "Updated");
+        assert_eq!(updated.pearl.status, Status::InProgress);
+
+        let closed = server
+            .close_tool(CloseInput {
+                id: updated.pearl.id.clone(),
+            })
+            .expect("close failed");
+        assert_eq!(closed.pearl.status, Status::Closed);
+
+        let ready = server
+            .ready_tool(ReadyInput { limit: None })
+            .expect("ready failed");
+        assert!(ready.ready.is_empty());
+    }
+
+    #[test]
+    fn test_read_resources() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let created = server
+            .create_tool(CreateInput {
+                title: "Resource Pearl".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let ready = server
+            .read_resource_by_uri("pearls://ready")
+            .expect("ready resource failed");
+        let ready_text = extract_text(ready);
+        assert!(ready_text.contains("ready"));
+
+        let resource_uri = format!("pearls://{}", created.pearl.id);
+        let pearl = server
+            .read_resource_by_uri(&resource_uri)
+            .expect("pearl resource failed");
+        let pearl_text = extract_text(pearl);
+        assert!(pearl_text.contains(&created.pearl.id));
+    }
+
+    #[test]
+    fn test_read_only_blocks_mutations() {
+        let temp = init_repo();
+        let server = PearlsMcp::new(McpOptions {
+            repo: Some(temp.path().to_path_buf()),
+            read_only: true,
+            log_level: "info".to_string(),
+            log_file: None,
+        });
+
+        let result = server.create_tool(CreateInput {
+            title: "Blocked".to_string(),
+            description: None,
+            priority: None,
+            labels: None,
+            author: None,
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_plan_snapshot_and_next_action() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let first = server
+            .create_tool(CreateInput {
+                title: "Ready Pearl".to_string(),
+                description: None,
+                priority: Some(0),
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let next = server.next_action_tool().expect("next action failed");
+        assert_eq!(next.pearl.as_ref().unwrap().id, first.pearl.id);
+
+        let snapshot = server
+            .plan_snapshot_tool(PlanSnapshotInput { limit: Some(5) })
+            .expect("snapshot failed");
+        assert!(!snapshot.counts_by_status.is_empty());
+    }
+
+    #[test]
+    fn test_transition_safe_blocks_when_invalid() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let blocker = server
+            .create_tool(CreateInput {
+                title: "Blocker".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let created = server
+            .create_tool(CreateInput {
+                title: "Transition Pearl".to_string(),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .expect("create failed");
+
+        let repo = server.repo_context().expect("repo context");
+        let mut storage = repo.open_storage().expect("storage");
+        let mut pearl = storage
+            .load_by_id(&created.pearl.id)
+            .expect("load pearl");
+        pearl.deps.push(pearls_core::Dependency {
+            target_id: blocker.pearl.id.clone(),
+            dep_type: pearls_core::DepType::Blocks,
+        });
+        storage.save(&pearl).expect("save pearl");
+
+        let result = server
+            .transition_safe_tool(TransitionSafeInput {
+                id: created.pearl.id.clone(),
+                status: "closed".to_string(),
+            })
+            .expect("transition safe failed");
+
+        assert!(!result.transitioned);
+        assert!(result.message.contains("transition"));
+    }
+
+    #[test]
+    fn test_ready_resource_empty() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let ready = server
+            .read_resource_by_uri("pearls://ready")
+            .expect("ready resource failed");
+        let text = extract_text(ready);
+        assert!(text.contains("No Pearls found"));
+    }
 }
