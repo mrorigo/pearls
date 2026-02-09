@@ -3,8 +3,10 @@
 //! MCP server runtime for Pearls.
 
 use crate::types::{
-    BlockedChain, EmptyInput, ListInput, ListResult, NextActionResult, PlanSnapshotInput,
-    PlanSnapshotResult, ReadyResource, StatusCount, TransitionSafeInput, TransitionSafeResult,
+    BlockedChain, CloseInput, CloseResult, CreateInput, CreateResult, EmptyInput, ListInput,
+    ListResult, NextActionResult, PlanSnapshotInput, PlanSnapshotResult, ReadyInput, ReadyResource,
+    ShowInput, ShowResult, StatusCount, TransitionSafeInput, TransitionSafeResult, UpdateInput,
+    UpdateResult,
 };
 use pearls_app::{
     list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
@@ -12,9 +14,10 @@ use pearls_app::{
 };
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{
-    AnnotateAble, CallToolResult, Content, ErrorData, Implementation, ListResourcesResult,
-    PaginatedRequestParams, ProtocolVersion, RawResource, ReadResourceRequestParams,
-    ReadResourceResult, ResourceContents, ServerCapabilities, ServerInfo,
+    AnnotateAble, CallToolResult, Content, ErrorData, Implementation, ListResourceTemplatesResult,
+    ListResourcesResult, PaginatedRequestParams, ProtocolVersion, RawResource,
+    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::transport::stdio;
 use rmcp::{tool, tool_handler, tool_router, RoleServer, ServiceExt};
@@ -185,12 +188,17 @@ impl PearlsMcp {
         })
     }
 
-    fn list_tool(&self, input: ListInput) -> Result<ListResult, AppError> {
+    fn load_active_pearls(&self) -> Result<Vec<pearls_core::Pearl>, AppError> {
+        let repo = self.repo_context()?;
+        let storage = repo.open_storage()?;
+        Ok(storage.load_all()?)
+    }
+
+    fn load_all_pearls(&self, include_archived: bool) -> Result<Vec<pearls_core::Pearl>, AppError> {
         let repo = self.repo_context()?;
         let storage = repo.open_storage()?;
         let mut pearls = storage.load_all()?;
-
-        if input.include_archived.unwrap_or(false) {
+        if include_archived {
             if let Some(archive_storage) = repo.open_archive_storage()? {
                 if let Ok(archived) = archive_storage.load_all() {
                     let mut archived = archived;
@@ -203,6 +211,195 @@ impl PearlsMcp {
                 }
             }
         }
+        Ok(pearls)
+    }
+
+    fn create_tool(&self, input: CreateInput) -> Result<CreateResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        if input.title.trim().is_empty() {
+            return Err(AppError::InvalidInput("Title cannot be empty".to_string()));
+        }
+
+        let repo = self.repo_context()?;
+        let config = repo.load_config()?;
+        let author = input
+            .author
+            .or_else(default_author)
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let mut pearl = pearls_core::Pearl::new(input.title, author);
+
+        if let Some(description) = input.description {
+            enforce_description_limit(&description)?;
+            pearl.description = description;
+        }
+
+        if let Some(priority) = input.priority {
+            if priority > 4 {
+                return Err(AppError::InvalidInput(format!(
+                    "Priority must be 0-4, got {}",
+                    priority
+                )));
+            }
+            pearl.priority = priority;
+        } else {
+            pearl.priority = config.default_priority;
+        }
+
+        if let Some(labels) = input.labels {
+            pearl.labels = labels;
+        }
+
+        pearl.validate()?;
+
+        let mut storage = repo.open_storage()?;
+        storage.save(&pearl)?;
+
+        Ok(CreateResult { pearl })
+    }
+
+    fn show_tool(&self, input: ShowInput) -> Result<ShowResult, AppError> {
+        let pearls = self.load_all_pearls(input.include_archived.unwrap_or(false))?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let pearl = pearls
+            .into_iter()
+            .find(|pearl| pearl.id == full_id)
+            .ok_or(AppError::Core(pearls_core::Error::NotFound(full_id)))?;
+        Ok(ShowResult { pearl })
+    }
+
+    fn update_tool(&self, input: UpdateInput) -> Result<UpdateResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let mut pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let position = pearls
+            .iter()
+            .position(|pearl| pearl.id == full_id)
+            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
+        let mut pearl = pearls[position].clone();
+
+        if let Some(title) = input.title {
+            pearl.title = title;
+        }
+        if let Some(description) = input.description {
+            enforce_description_limit(&description)?;
+            pearl.description = description;
+        }
+        if let Some(priority) = input.priority {
+            if priority > 4 {
+                return Err(AppError::InvalidInput(format!(
+                    "Priority must be 0-4, got {}",
+                    priority
+                )));
+            }
+            pearl.priority = priority;
+        }
+        if let Some(status) = input.status {
+            let new_status = parse_status(&status)?;
+            let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+            validate_transition(&pearl, new_status, &graph)?;
+            pearl.status = new_status;
+        }
+
+        if let Some(add_labels) = input.add_labels {
+            for label in add_labels {
+                if !pearl.labels.contains(&label) {
+                    pearl.labels.push(label);
+                }
+            }
+        }
+        if let Some(remove_labels) = input.remove_labels {
+            for label in remove_labels {
+                pearl.labels.retain(|existing| existing != &label);
+            }
+        }
+
+        pearl.updated_at = unix_timestamp()?;
+        pearl.validate()?;
+
+        pearls[position] = pearl.clone();
+        storage.save(&pearl)?;
+
+        Ok(UpdateResult { pearl })
+    }
+
+    fn close_tool(&self, input: CloseInput) -> Result<CloseResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let mut pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let position = pearls
+            .iter()
+            .position(|pearl| pearl.id == full_id)
+            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
+        let mut pearl = pearls[position].clone();
+
+        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+        validate_transition(&pearl, pearls_core::Status::Closed, &graph)?;
+        pearl.status = pearls_core::Status::Closed;
+        pearl.updated_at = unix_timestamp()?;
+        pearl.validate()?;
+
+        pearls[position] = pearl.clone();
+        storage.save(&pearl)?;
+
+        Ok(CloseResult { pearl })
+    }
+
+    fn ready_tool(&self, input: ReadyInput) -> Result<ReadyResource, AppError> {
+        let pearls = self.load_active_pearls()?;
+        if pearls.is_empty() {
+            return Ok(ReadyResource {
+                ready: Vec::new(),
+                total: 0,
+                returned: 0,
+                message: Some("No Pearls found".to_string()),
+            });
+        }
+
+        let ready = ready_queue(pearls)?;
+        let total = ready.len();
+        if total == 0 {
+            return Ok(ReadyResource {
+                ready: Vec::new(),
+                total: 0,
+                returned: 0,
+                message: Some("No Pearls ready for work".to_string()),
+            });
+        }
+
+        let limited: Vec<pearls_core::Pearl> = ready
+            .into_iter()
+            .take(input.limit.unwrap_or(usize::MAX))
+            .collect();
+        Ok(ReadyResource {
+            ready: limited.clone(),
+            total,
+            returned: limited.len(),
+            message: None,
+        })
+    }
+
+    fn list_tool(&self, input: ListInput) -> Result<ListResult, AppError> {
+        let pearls = self.load_all_pearls(input.include_archived.unwrap_or(false))?;
 
         let status = match input.status.as_deref() {
             Some(status) => Some(parse_status(status)?),
@@ -417,6 +614,71 @@ impl PearlsMcp {
         Ok(CallToolResult::success(vec![Content::text(payload)]))
     }
 
+    /// Creates a new Pearl.
+    #[tool(description = "Create a Pearl.")]
+    async fn create(
+        &self,
+        params: Parameters<CreateInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.create_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Shows a Pearl by ID.
+    #[tool(description = "Show a Pearl by ID.")]
+    async fn show(
+        &self,
+        params: Parameters<ShowInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.show_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Updates a Pearl.
+    #[tool(description = "Update a Pearl.")]
+    async fn update(
+        &self,
+        params: Parameters<UpdateInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.update_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Closes a Pearl.
+    #[tool(description = "Close a Pearl.")]
+    async fn close(
+        &self,
+        params: Parameters<CloseInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.close_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Returns the ready queue.
+    #[tool(description = "Return the ready queue.")]
+    async fn ready(
+        &self,
+        params: Parameters<ReadyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.ready_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
     /// Returns the next recommended Pearl and blocker context.
     #[tool(name = "pearls_next_action", description = "Return the next recommended Pearl.")]
     async fn next_action(
@@ -497,35 +759,91 @@ impl rmcp::ServerHandler for PearlsMcp {
         Ok(ListResourcesResult::with_all_items(vec![ready]))
     }
 
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let template = RawResourceTemplate {
+            uri_template: "pearls://prl-{id}".to_string(),
+            name: "pearl".to_string(),
+            title: Some("Pearl".to_string()),
+            description: Some("Read a Pearl by ID".to_string()),
+            mime_type: Some("application/json".to_string()),
+            icons: None,
+        }
+        .no_annotation();
+
+        Ok(ListResourceTemplatesResult::with_all_items(vec![template]))
+    }
+
     async fn read_resource(
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        if request.uri.as_str() != "pearls://ready" {
-            return Err(ErrorData::resource_not_found(
-                "Resource not found",
-                Some(serde_json::json!({
-                    "uri": request.uri,
-                })),
-            ));
+        if request.uri.as_str() == "pearls://ready" {
+            let ready = self.ready_resource().map_err(map_app_error)?;
+            let payload = serde_json::to_string(&ready).map_err(|err| {
+                ErrorData::internal_error(
+                    "Failed to serialize resource",
+                    Some(err.to_string().into()),
+                )
+            })?;
+
+            let contents = ResourceContents::TextResourceContents {
+                uri: "pearls://ready".to_string(),
+                mime_type: Some("application/json".to_string()),
+                text: payload,
+                meta: None,
+            };
+
+            return Ok(ReadResourceResult {
+                contents: vec![contents],
+            });
         }
 
-        let ready = self.ready_resource().map_err(map_app_error)?;
-        let payload = serde_json::to_string(&ready).map_err(|err| {
-            ErrorData::internal_error("Failed to serialize resource", Some(err.to_string().into()))
-        })?;
+        if let Some(id) = request.uri.as_str().strip_prefix("pearls://") {
+            if let Some(id) = id.strip_prefix("prl-") {
+                let id = format!("prl-{}", id);
+                let pearls = self.load_all_pearls(true).map_err(map_app_error)?;
+                let full_id = resolve_pearl_id(&id, &pearls).map_err(map_app_error)?;
+                let pearl = pearls
+                    .into_iter()
+                    .find(|pearl| pearl.id == full_id)
+                    .ok_or_else(|| {
+                        ErrorData::resource_not_found(
+                            "Pearl not found",
+                            Some(serde_json::json!({ "id": full_id })),
+                        )
+                    })?;
 
-        let contents = ResourceContents::TextResourceContents {
-            uri: "pearls://ready".to_string(),
-            mime_type: Some("application/json".to_string()),
-            text: payload,
-            meta: None,
-        };
+                let payload = serde_json::to_string(&pearl).map_err(|err| {
+                    ErrorData::internal_error(
+                        "Failed to serialize resource",
+                        Some(err.to_string().into()),
+                    )
+                })?;
 
-        Ok(ReadResourceResult {
-            contents: vec![contents],
-        })
+                let contents = ResourceContents::TextResourceContents {
+                    uri: request.uri.to_string(),
+                    mime_type: Some("application/json".to_string()),
+                    text: payload,
+                    meta: None,
+                };
+
+                return Ok(ReadResourceResult {
+                    contents: vec![contents],
+                });
+            }
+        }
+
+        Err(ErrorData::resource_not_found(
+            "Resource not found",
+            Some(serde_json::json!({
+                "uri": request.uri,
+            })),
+        ))
     }
 }
 
@@ -557,4 +875,20 @@ fn status_key(status: pearls_core::Status) -> String {
         pearls_core::Status::Closed => "closed",
     }
     .to_string()
+}
+
+fn default_author() -> Option<String> {
+    std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("USERNAME").ok())
+}
+
+fn enforce_description_limit(description: &str) -> Result<(), AppError> {
+    const MAX_BYTES: usize = 64 * 1024;
+    if description.len() > MAX_BYTES {
+        return Err(AppError::InvalidInput(
+            "Description exceeds 64KB limit".to_string(),
+        ));
+    }
+    Ok(())
 }

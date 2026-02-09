@@ -46,6 +46,91 @@ pub struct ListResult {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 pub struct EmptyInput {}
 
+/// Input parameters for the `create` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CreateInput {
+    /// Title of the Pearl.
+    pub title: String,
+    /// Description of the Pearl.
+    pub description: Option<String>,
+    /// Priority level (0-4).
+    pub priority: Option<u8>,
+    /// Labels to assign.
+    pub labels: Option<Vec<String>>,
+    /// Author name.
+    pub author: Option<String>,
+}
+
+/// Output payload for the `create` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateResult {
+    /// Created Pearl.
+    pub pearl: Pearl,
+}
+
+/// Input parameters for the `show` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ShowInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+    /// Include archived Pearls.
+    pub include_archived: Option<bool>,
+}
+
+/// Output payload for the `show` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowResult {
+    /// The requested Pearl.
+    pub pearl: Pearl,
+}
+
+/// Input parameters for the `update` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+    /// New title.
+    pub title: Option<String>,
+    /// New description.
+    pub description: Option<String>,
+    /// New priority (0-4).
+    pub priority: Option<u8>,
+    /// New status.
+    pub status: Option<String>,
+    /// Labels to add.
+    pub add_labels: Option<Vec<String>>,
+    /// Labels to remove.
+    pub remove_labels: Option<Vec<String>>,
+}
+
+/// Output payload for the `update` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateResult {
+    /// Updated Pearl.
+    pub pearl: Pearl,
+}
+
+/// Input parameters for the `close` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct CloseInput {
+    /// Pearl ID (full or partial).
+    pub id: String,
+}
+
+/// Output payload for the `close` tool.
+#[derive(Debug, Clone, Serialize)]
+pub struct CloseResult {
+    /// Closed Pearl.
+    pub pearl: Pearl,
+}
+
+/// Input parameters for the `ready` tool.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ReadyInput {
+    /// Maximum number of items to return.
+    pub limit: Option<usize>,
+}
+
 /// Input parameters for the `pearls_plan_snapshot` tool.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct PlanSnapshotInput {

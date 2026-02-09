@@ -50,6 +50,11 @@ This command starts a JSON-RPC MCP server over stdio. Use `--read-only` to disab
 
 Currently available MCP tools:
 - `list`: list Pearls with optional filters.
+- `create`: create a Pearl.
+- `show`: show a Pearl by ID.
+- `update`: update a Pearl.
+- `close`: close a Pearl.
+- `ready`: list the ready queue.
 - `pearls_next_action`: get the next recommended Pearl plus blockers context.
 - `pearls_plan_snapshot`: get a compact board summary.
 - `pearls_transition_safe`: attempt a status transition and return blockers if denied.
