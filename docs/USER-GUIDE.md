@@ -59,6 +59,12 @@ Currently available MCP tools:
 - `pearls_plan_snapshot`: get a compact board summary.
 - `pearls_transition_safe`: attempt a status transition and return blockers if denied.
 
+### MCP Resources
+
+Available MCP resources:
+- `pearls://ready`: read the current ready queue.
+- `pearls://prl-<id>`: read a Pearl by ID (full or partial).
+
 ### MCP Protocol Snapshots
 
 Example `tools/list` request:
