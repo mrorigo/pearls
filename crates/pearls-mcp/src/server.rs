@@ -2,10 +2,13 @@
 
 //! MCP server runtime for Pearls.
 
-use crate::types::{ListInput, ListResult, ReadyResource};
+use crate::types::{
+    BlockedChain, EmptyInput, ListInput, ListResult, NextActionResult, PlanSnapshotInput,
+    PlanSnapshotResult, ReadyResource, StatusCount, TransitionSafeInput, TransitionSafeResult,
+};
 use pearls_app::{
-    list_pearls, parse_dep_type, parse_status, ready_queue, AppError, ErrorEnvelope, ListOptions,
-    RepoContext, SuccessEnvelope,
+    list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
+    validate_transition, AppError, ErrorEnvelope, ListOptions, RepoContext, SuccessEnvelope,
 };
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{
@@ -16,6 +19,7 @@ use rmcp::model::{
 use rmcp::transport::stdio;
 use rmcp::{tool, tool_handler, tool_router, RoleServer, ServiceExt};
 use rmcp::service::RequestContext;
+use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -227,6 +231,173 @@ impl PearlsMcp {
         let total = pearls.len();
         Ok(ListResult { pearls, total })
     }
+
+    fn next_action_tool(&self) -> Result<NextActionResult, AppError> {
+        let repo = self.repo_context()?;
+        let storage = repo.open_storage()?;
+        let pearls = storage.load_all()?;
+        if pearls.is_empty() {
+            return Ok(NextActionResult {
+                pearl: None,
+                blockers: Vec::new(),
+                message: Some("No Pearls found".to_string()),
+            });
+        }
+
+        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+        let ready = graph.ready_queue();
+        if let Some(pearl) = ready.first() {
+            return Ok(NextActionResult {
+                pearl: Some((*pearl).clone()),
+                blockers: Vec::new(),
+                message: None,
+            });
+        }
+
+        let mut blocked: Vec<&pearls_core::Pearl> = pearls
+            .iter()
+            .filter(|pearl| {
+                pearl.status != pearls_core::Status::Closed
+                    && pearl.status != pearls_core::Status::Deferred
+                    && graph.is_blocked(&pearl.id)
+            })
+            .collect();
+
+        blocked.sort_by(|a, b| match a.priority.cmp(&b.priority) {
+            std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
+            other => other,
+        });
+
+        if let Some(pearl) = blocked.first() {
+            let blockers = graph
+                .blocking_deps(&pearl.id)
+                .into_iter()
+                .cloned()
+                .collect();
+            return Ok(NextActionResult {
+                pearl: Some((*pearl).clone()),
+                blockers,
+                message: Some("No ready Pearls; showing top blocked item".to_string()),
+            });
+        }
+
+        Ok(NextActionResult {
+            pearl: None,
+            blockers: Vec::new(),
+            message: Some("No actionable Pearls found".to_string()),
+        })
+    }
+
+    fn plan_snapshot_tool(&self, input: PlanSnapshotInput) -> Result<PlanSnapshotResult, AppError> {
+        let limit = input.limit.unwrap_or(5);
+        let repo = self.repo_context()?;
+        let storage = repo.open_storage()?;
+        let pearls = storage.load_all()?;
+        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for pearl in &pearls {
+            let key = status_key(pearl.status);
+            *counts.entry(key).or_insert(0) += 1;
+        }
+
+        let mut counts_by_status: Vec<StatusCount> = counts
+            .into_iter()
+            .map(|(status, count)| StatusCount { status, count })
+            .collect();
+        counts_by_status.sort_by(|a, b| a.status.cmp(&b.status));
+
+        let top_ready: Vec<pearls_core::Pearl> = graph
+            .ready_queue()
+            .into_iter()
+            .take(limit)
+            .cloned()
+            .collect();
+
+        let mut blocked: Vec<&pearls_core::Pearl> = pearls
+            .iter()
+            .filter(|pearl| {
+                pearl.status != pearls_core::Status::Closed
+                    && pearl.status != pearls_core::Status::Deferred
+                    && graph.is_blocked(&pearl.id)
+            })
+            .collect();
+        blocked.sort_by(|a, b| match a.priority.cmp(&b.priority) {
+            std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
+            other => other,
+        });
+
+        let blocked_chains = blocked
+            .into_iter()
+            .take(limit)
+            .map(|pearl| BlockedChain {
+                pearl: pearl.clone(),
+                blockers: graph
+                    .blocking_deps(&pearl.id)
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+            })
+            .collect();
+
+        Ok(PlanSnapshotResult {
+            counts_by_status,
+            top_ready,
+            blocked_chains,
+        })
+    }
+
+    fn transition_safe_tool(
+        &self,
+        input: TransitionSafeInput,
+    ) -> Result<TransitionSafeResult, AppError> {
+        if self.options.read_only {
+            return Err(AppError::InvalidInput(
+                "Server is running in read-only mode".to_string(),
+            ));
+        }
+
+        let repo = self.repo_context()?;
+        let mut storage = repo.open_storage()?;
+        let mut pearls = storage.load_all()?;
+        let full_id = resolve_pearl_id(&input.id, &pearls)?;
+        let position = pearls
+            .iter()
+            .position(|pearl| pearl.id == full_id)
+            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
+        let mut pearl = pearls[position].clone();
+
+        let new_status = parse_status(&input.status)?;
+        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
+
+        if let Err(error) = validate_transition(&pearl, new_status, &graph) {
+            let blockers = graph
+                .blocking_deps(&pearl.id)
+                .into_iter()
+                .cloned()
+                .collect();
+            return Ok(TransitionSafeResult {
+                transitioned: false,
+                pearl: Some(pearl),
+                blockers,
+                message: error.to_string(),
+            });
+        }
+
+        pearl.status = new_status;
+        pearl.updated_at = unix_timestamp()?;
+        pearl.validate()?;
+
+        pearls[position] = pearl.clone();
+        storage.save(&pearl)?;
+
+        Ok(TransitionSafeResult {
+            transitioned: true,
+            pearl: Some(pearl),
+            blockers: Vec::new(),
+            message: "Transition applied".to_string(),
+        })
+    }
 }
 
 #[tool_router(router = tool_router)]
@@ -241,6 +412,45 @@ impl PearlsMcp {
         let result = self.list_tool(input).map_err(map_app_error)?;
         let envelope = SuccessEnvelope::new(result);
         let payload = serde_json::to_string(&envelope).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Returns the next recommended Pearl and blocker context.
+    #[tool(name = "pearls_next_action", description = "Return the next recommended Pearl.")]
+    async fn next_action(
+        &self,
+        _params: Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.next_action_tool().map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Returns a compact plan snapshot for the board.
+    #[tool(name = "pearls_plan_snapshot", description = "Return a compact plan snapshot.")]
+    async fn plan_snapshot(
+        &self,
+        params: Parameters<PlanSnapshotInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.plan_snapshot_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
+            ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(payload)]))
+    }
+
+    /// Attempts a safe transition and returns blockers if denied.
+    #[tool(name = "pearls_transition_safe", description = "Safely transition a Pearl status.")]
+    async fn transition_safe(
+        &self,
+        params: Parameters<TransitionSafeInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = self.transition_safe_tool(params.0).map_err(map_app_error)?;
+        let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
         })?;
         Ok(CallToolResult::success(vec![Content::text(payload)]))
@@ -336,4 +546,15 @@ fn map_app_error(error: AppError) -> ErrorData {
         | pearls_app::ErrorCode::JsonError
         | pearls_app::ErrorCode::Unknown => ErrorData::internal_error(envelope.message, data),
     }
+}
+
+fn status_key(status: pearls_core::Status) -> String {
+    match status {
+        pearls_core::Status::Open => "open",
+        pearls_core::Status::InProgress => "in_progress",
+        pearls_core::Status::Blocked => "blocked",
+        pearls_core::Status::Deferred => "deferred",
+        pearls_core::Status::Closed => "closed",
+    }
+    .to_string()
 }

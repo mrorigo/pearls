@@ -46,6 +46,69 @@ prl mcp --repo .
 
 This command starts a JSON-RPC MCP server over stdio. Use `--read-only` to disable mutating tools.
 
+### MCP Tool Catalog
+
+Currently available MCP tools:
+- `list`: list Pearls with optional filters.
+- `pearls_next_action`: get the next recommended Pearl plus blockers context.
+- `pearls_plan_snapshot`: get a compact board summary.
+- `pearls_transition_safe`: attempt a status transition and return blockers if denied.
+
+### MCP Protocol Snapshots
+
+Example `tools/list` request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {}
+}
+```
+
+Example `tools/call` request for `list`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "list",
+    "arguments": {
+      "status": "open",
+      "include_archived": false
+    }
+  }
+}
+```
+
+Example `tools/call` response body (success payload):
+
+```json
+{
+  "status": "ok",
+  "result": {
+    "pearls": [],
+    "total": 0
+  }
+}
+```
+
+Example `resources/read` for `pearls://ready`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resources/read",
+  "params": {
+    "uri": "pearls://ready"
+  }
+}
+```
+
 ## Concepts
 
 Pearls are issues with:
