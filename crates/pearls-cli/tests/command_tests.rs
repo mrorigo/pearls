@@ -104,10 +104,30 @@ fn add_file_and_commit(repo: &Repository, path: &Path, content: &str, message: &
     create_commit(repo, message);
 }
 
+fn add_all_and_commit(repo: &Repository, message: &str) {
+    let mut index = repo.index().expect("Failed to get index");
+    index
+        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        .expect("Failed to add all paths");
+    index.write().expect("Failed to write index");
+    create_commit(repo, message);
+}
+
 fn head_refspec(repo: &Repository) -> String {
     let head = repo.head().expect("Failed to read HEAD");
     let name = head.name().expect("Failed to read HEAD name");
     format!("{name}:{name}")
+}
+
+fn assert_no_rebase_metadata(repo_root: &Path) {
+    assert!(
+        !repo_root.join(".git/rebase-merge").exists(),
+        "rebase-merge metadata should not exist"
+    );
+    assert!(
+        !repo_root.join(".git/rebase-apply").exists(),
+        "rebase-apply metadata should not exist"
+    );
 }
 
 struct CaptureFormatter {
@@ -908,6 +928,7 @@ fn test_sync_dry_run() {
     init_repo(temp_dir.path());
 
     let repo = Repository::open(temp_dir.path()).expect("Failed to open repo");
+    add_all_and_commit(&repo, "track pearls metadata");
     add_file_and_commit(&repo, Path::new("README.md"), "test", "init");
 
     // Set up a bare remote and push initial commit
@@ -934,6 +955,7 @@ fn test_sync_pushes_to_remote() {
     init_repo(temp_dir.path());
 
     let repo = Repository::open(temp_dir.path()).expect("Failed to open repo");
+    add_all_and_commit(&repo, "track pearls metadata");
     add_file_and_commit(&repo, Path::new("README.md"), "test", "init");
 
     let remote_dir = TempDir::new().expect("Failed to create remote");
@@ -949,6 +971,116 @@ fn test_sync_pushes_to_remote() {
     }
 
     pearls_cli::commands::sync::execute(false).expect("Sync failed");
+}
+
+#[test]
+fn test_sync_fails_with_staged_changes_without_starting_rebase() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let repo = Repository::open(temp_dir.path()).expect("Failed to open repo");
+    add_all_and_commit(&repo, "track pearls metadata");
+    add_file_and_commit(&repo, Path::new("README.md"), "base", "init");
+
+    fs::write(temp_dir.path().join("README.md"), "staged local change")
+        .expect("Failed to write staged change");
+    let mut index = repo.index().expect("Failed to get index");
+    index
+        .add_path(Path::new("README.md"))
+        .expect("Failed to stage file");
+    index.write().expect("Failed to write index");
+
+    let err = pearls_cli::commands::sync::execute(false).expect_err("Sync should fail");
+    assert!(
+        err.to_string()
+            .contains("Working directory has changes. Commit or stash before sync."),
+        "Unexpected error: {err}"
+    );
+    assert_no_rebase_metadata(temp_dir.path());
+}
+
+#[test]
+fn test_sync_fails_with_unstaged_changes_without_starting_rebase() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let repo = Repository::open(temp_dir.path()).expect("Failed to open repo");
+    add_all_and_commit(&repo, "track pearls metadata");
+    add_file_and_commit(&repo, Path::new("README.md"), "base", "init");
+
+    fs::write(temp_dir.path().join("README.md"), "unstaged local change")
+        .expect("Failed to write unstaged change");
+
+    let err = pearls_cli::commands::sync::execute(false).expect_err("Sync should fail");
+    assert!(
+        err.to_string()
+            .contains("Working directory has changes. Commit or stash before sync."),
+        "Unexpected error: {err}"
+    );
+    assert_no_rebase_metadata(temp_dir.path());
+}
+
+#[test]
+fn test_sync_aborts_rebase_on_conflict_and_cleans_metadata() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    init_git_repo(temp_dir.path());
+    let _guard = enter_dir(temp_dir.path());
+    init_repo(temp_dir.path());
+
+    let repo = Repository::open(temp_dir.path()).expect("Failed to open repo");
+    add_all_and_commit(&repo, "track pearls metadata");
+    add_file_and_commit(&repo, Path::new("README.md"), "base", "init");
+
+    let remote_dir = TempDir::new().expect("Failed to create remote");
+    Repository::init_bare(remote_dir.path()).expect("Failed to init bare repo");
+    repo.remote("origin", remote_dir.path().to_str().expect("remote path"))
+        .expect("Failed to add remote");
+    {
+        let mut remote = repo.find_remote("origin").expect("Failed to find remote");
+        remote
+            .push(&[head_refspec(&repo)], None)
+            .expect("Failed to push initial commit");
+    }
+
+    let clone_dir = TempDir::new().expect("Failed to create clone dir");
+    let clone_repo = Repository::clone(
+        remote_dir.path().to_str().expect("remote path"),
+        clone_dir.path(),
+    )
+    .expect("Failed to clone remote");
+    add_file_and_commit(
+        &clone_repo,
+        &clone_dir.path().join("README.md"),
+        "remote conflicting change",
+        "remote change",
+    );
+    {
+        let mut remote = clone_repo
+            .find_remote("origin")
+            .expect("Failed to find clone origin");
+        remote
+            .push(&[head_refspec(&clone_repo)], None)
+            .expect("Failed to push remote change");
+    }
+
+    add_file_and_commit(
+        &repo,
+        Path::new("README.md"),
+        "local conflicting change",
+        "local",
+    );
+
+    let err = pearls_cli::commands::sync::execute(false).expect_err("Sync should fail");
+    let error_text = err.to_string();
+    assert!(
+        error_text.contains("Rebase conflict detected") || error_text.contains("rebase->index"),
+        "Unexpected error: {err}"
+    );
+    assert_no_rebase_metadata(temp_dir.path());
 }
 
 #[test]

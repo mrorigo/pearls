@@ -7,6 +7,7 @@
 use clap::Parser;
 
 pub mod commands;
+pub mod git;
 pub mod output;
 pub mod output_mode;
 pub mod progress;

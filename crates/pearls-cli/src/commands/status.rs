@@ -4,10 +4,11 @@
 //!
 //! Displays project health checks and a "land the plane" checklist.
 
+use crate::git::working_tree_is_clean;
 use crate::output_mode::is_json_output;
 use anyhow::Result;
 use chrono::{Duration, Utc};
-use git2::{BranchType, Repository, StatusOptions};
+use git2::{BranchType, Repository};
 use pearls_core::{IssueGraph, Status, Storage};
 use std::path::Path;
 
@@ -134,10 +135,7 @@ struct GitStatusSummary {
 
 fn collect_git_status() -> Result<GitStatusSummary> {
     let repo = Repository::discover(".")?;
-    let mut options = StatusOptions::new();
-    options.include_untracked(true).recurse_untracked_dirs(true);
-    let statuses = repo.statuses(Some(&mut options))?;
-    let is_clean = statuses.is_empty();
+    let is_clean = working_tree_is_clean(&repo)?;
 
     let sync_status = resolve_sync_status(&repo);
 
