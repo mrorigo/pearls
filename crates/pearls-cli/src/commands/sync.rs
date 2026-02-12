@@ -4,6 +4,7 @@
 //!
 //! Synchronizes the repository with the remote using pull --rebase semantics.
 
+use crate::git::ensure_clean_working_tree_for_sync;
 use crate::output_mode::is_json_output;
 use anyhow::Result;
 use git2::{Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature};
@@ -50,6 +51,7 @@ pub fn execute(dry_run: bool) -> Result<()> {
     }
 
     let repo = Repository::discover(".")?;
+    ensure_clean_working_tree_for_sync(&repo)?;
     let branch_name = current_branch_name(&repo)?;
 
     let mut attempts = 0;
@@ -124,16 +126,25 @@ fn rebase_onto_upstream(repo: &Repository, branch_name: &str) -> Result<()> {
         .signature()
         .or_else(|_| Signature::now("pearls", "pearls@local"))?;
 
-    while let Some(operation) = rebase.next() {
-        operation?;
-        let index = rebase.inmemory_index()?;
-        if index.has_conflicts() {
-            anyhow::bail!("Rebase conflict detected. Resolve manually and retry.");
+    let result = (|| -> Result<()> {
+        while let Some(operation) = rebase.next() {
+            operation?;
+            let index = rebase.inmemory_index()?;
+            if index.has_conflicts() {
+                anyhow::bail!("Rebase conflict detected. Resolve manually and retry.");
+            }
+            rebase.commit(None, &signature, None)?;
         }
-        rebase.commit(None, &signature, None)?;
+
+        rebase.finish(Some(&signature))?;
+        Ok(())
+    })();
+
+    if let Err(err) = result {
+        let _ = rebase.abort();
+        return Err(err);
     }
 
-    rebase.finish(Some(&signature))?;
     Ok(())
 }
 
