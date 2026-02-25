@@ -18,7 +18,10 @@ impl<T> SuccessEnvelope<T> {
     /// Creates a new success envelope.
     #[must_use]
     pub fn new(result: T) -> Self {
-        Self { status: "ok", result }
+        Self {
+            status: "ok",
+            result,
+        }
     }
 }
 

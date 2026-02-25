@@ -177,7 +177,9 @@ fn sort_pearls(pearls: &mut [Pearl], field: &str) {
     match field {
         "id" => pearls.sort_by(|a, b| a.id.cmp(&b.id)),
         "title" => pearls.sort_by(|a, b| a.title.cmp(&b.title)),
-        "status" => pearls.sort_by(|a, b| format!("{:?}", a.status).cmp(&format!("{:?}", b.status))),
+        "status" => {
+            pearls.sort_by(|a, b| format!("{:?}", a.status).cmp(&format!("{:?}", b.status)))
+        }
         "priority" => pearls.sort_by(|a, b| a.priority.cmp(&b.priority)),
         "created_at" => pearls.sort_by(|a, b| a.created_at.cmp(&b.created_at)),
         "updated_at" => pearls.sort_by(|a, b| a.updated_at.cmp(&b.updated_at)),

@@ -166,9 +166,15 @@ fn prl_show_format_json_is_pure_json_without_human_suffix() {
         .expect("run prl");
 
     let payload = assert_json_stdout(&output);
-    assert_eq!(payload.get("id").and_then(Value::as_str), Some(child_id.as_str()));
+    assert_eq!(
+        payload.get("id").and_then(Value::as_str),
+        Some(child_id.as_str())
+    );
     assert!(payload.get("deps").is_some(), "missing deps in JSON");
-    assert!(payload.get("comments").is_some(), "missing comments in JSON");
+    assert!(
+        payload.get("comments").is_some(),
+        "missing comments in JSON"
+    );
 }
 
 #[test]

@@ -3,9 +3,9 @@
 //! MCP server runtime for Pearls.
 
 use crate::types::{
-    BlockedChain, CloseInput, CloseResult, CommentsAddInput, CommentsAddResult, CommentsDeleteInput,
-    CommentsDeleteResult, CommentsListInput, CommentsListResult, CreateInput, CreateResult,
-    EmptyInput, LinkInput, LinkItem, LinkResult, ListInput, ListResult,
+    BlockedChain, CloseInput, CloseResult, CommentsAddInput, CommentsAddResult,
+    CommentsDeleteInput, CommentsDeleteResult, CommentsListInput, CommentsListResult, CreateInput,
+    CreateResult, EmptyInput, LinkInput, LinkItem, LinkResult, ListInput, ListResult,
     NextActionResult, PlanSnapshotInput, PlanSnapshotResult, ReadyInput, ReadyResource, ShowInput,
     ShowResult, StatusCount, TransitionSafeInput, TransitionSafeResult, UnlinkInput, UnlinkItem,
     UnlinkResult, UpdateInput, UpdateResult,
@@ -17,13 +17,13 @@ use pearls_app::{
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{
     AnnotateAble, CallToolResult, Content, ErrorData, Implementation, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, ProtocolVersion, RawResource,
-    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
-    ServerCapabilities, ServerInfo,
+    ListResourcesResult, PaginatedRequestParams, ProtocolVersion, RawResource, RawResourceTemplate,
+    ReadResourceRequestParams, ReadResourceResult, ResourceContents, ServerCapabilities,
+    ServerInfo,
 };
+use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
 use rmcp::{tool, tool_handler, tool_router, RoleServer, ServiceExt};
-use rmcp::service::RequestContext;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
@@ -441,10 +441,7 @@ impl PearlsMcp {
         })
     }
 
-    fn comments_list_tool(
-        &self,
-        input: CommentsListInput,
-    ) -> Result<CommentsListResult, AppError> {
+    fn comments_list_tool(&self, input: CommentsListInput) -> Result<CommentsListResult, AppError> {
         let repo = self.repo_context()?;
         let mut storage = repo.open_storage()?;
         let pearls = storage.load_all()?;
@@ -800,10 +797,7 @@ impl PearlsMcp {
 impl PearlsMcp {
     /// Lists Pearls with optional filtering and sorting.
     #[tool(description = "List Pearls with optional filters.")]
-    async fn list(
-        &self,
-        params: Parameters<ListInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn list(&self, params: Parameters<ListInput>) -> Result<CallToolResult, ErrorData> {
         let input = params.0;
         let result = self.list_tool(input).map_err(map_app_error)?;
         let envelope = SuccessEnvelope::new(result);
@@ -815,10 +809,7 @@ impl PearlsMcp {
 
     /// Creates a new Pearl.
     #[tool(description = "Create a Pearl.")]
-    async fn create(
-        &self,
-        params: Parameters<CreateInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn create(&self, params: Parameters<CreateInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.create_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -828,10 +819,7 @@ impl PearlsMcp {
 
     /// Shows a Pearl by ID.
     #[tool(description = "Show a Pearl by ID.")]
-    async fn show(
-        &self,
-        params: Parameters<ShowInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn show(&self, params: Parameters<ShowInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.show_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -841,10 +829,7 @@ impl PearlsMcp {
 
     /// Updates a Pearl.
     #[tool(description = "Update a Pearl.")]
-    async fn update(
-        &self,
-        params: Parameters<UpdateInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn update(&self, params: Parameters<UpdateInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.update_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -854,10 +839,7 @@ impl PearlsMcp {
 
     /// Closes a Pearl.
     #[tool(description = "Close a Pearl.")]
-    async fn close(
-        &self,
-        params: Parameters<CloseInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn close(&self, params: Parameters<CloseInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.close_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -867,10 +849,7 @@ impl PearlsMcp {
 
     /// Returns the ready queue.
     #[tool(description = "Return the ready queue.")]
-    async fn ready(
-        &self,
-        params: Parameters<ReadyInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn ready(&self, params: Parameters<ReadyInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.ready_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -905,7 +884,10 @@ impl PearlsMcp {
     }
 
     /// Deletes a comment from a Pearl.
-    #[tool(name = "comments_delete", description = "Delete a comment from a Pearl.")]
+    #[tool(
+        name = "comments_delete",
+        description = "Delete a comment from a Pearl."
+    )]
     async fn comments_delete(
         &self,
         params: Parameters<CommentsDeleteInput>,
@@ -919,10 +901,7 @@ impl PearlsMcp {
 
     /// Links two Pearls with a dependency.
     #[tool(description = "Link Pearls with a dependency (from depends on to).")]
-    async fn link(
-        &self,
-        params: Parameters<LinkInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn link(&self, params: Parameters<LinkInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.link_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -932,10 +911,7 @@ impl PearlsMcp {
 
     /// Removes a dependency between Pearls.
     #[tool(description = "Unlink two Pearls.")]
-    async fn unlink(
-        &self,
-        params: Parameters<UnlinkInput>,
-    ) -> Result<CallToolResult, ErrorData> {
+    async fn unlink(&self, params: Parameters<UnlinkInput>) -> Result<CallToolResult, ErrorData> {
         let result = self.unlink_tool(params.0).map_err(map_app_error)?;
         let payload = serde_json::to_string(&SuccessEnvelope::new(result)).map_err(|err| {
             ErrorData::internal_error("Failed to serialize response", Some(err.to_string().into()))
@@ -944,7 +920,10 @@ impl PearlsMcp {
     }
 
     /// Returns the next recommended Pearl and blocker context.
-    #[tool(name = "next_action", description = "Return the next recommended Pearl.")]
+    #[tool(
+        name = "next_action",
+        description = "Return the next recommended Pearl."
+    )]
     async fn next_action(
         &self,
         _params: Parameters<EmptyInput>,
@@ -957,7 +936,10 @@ impl PearlsMcp {
     }
 
     /// Returns a compact plan snapshot for the board.
-    #[tool(name = "plan_snapshot", description = "Return a compact plan snapshot.")]
+    #[tool(
+        name = "plan_snapshot",
+        description = "Return a compact plan snapshot."
+    )]
     async fn plan_snapshot(
         &self,
         params: Parameters<PlanSnapshotInput>,
@@ -970,7 +952,10 @@ impl PearlsMcp {
     }
 
     /// Attempts a safe transition and returns blockers if denied.
-    #[tool(name = "transition_safe", description = "Safely transition a Pearl status.")]
+    #[tool(
+        name = "transition_safe",
+        description = "Safely transition a Pearl status."
+    )]
     async fn transition_safe(
         &self,
         params: Parameters<TransitionSafeInput>,
@@ -1537,9 +1522,7 @@ mod tests {
 
         let repo = server.repo_context().expect("repo context");
         let mut storage = repo.open_storage().expect("storage");
-        let mut pearl = storage
-            .load_by_id(&transition_id)
-            .expect("load pearl");
+        let mut pearl = storage.load_by_id(&transition_id).expect("load pearl");
         pearl.deps.push(pearls_core::Dependency {
             target_id: blocker_id.clone(),
             dep_type: pearls_core::DepType::Blocks,
