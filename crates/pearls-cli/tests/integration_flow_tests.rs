@@ -7,6 +7,7 @@ use pearls_cli::OutputFormatter;
 use pearls_core::{Pearl, Status, Storage};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Mutex;
 use tempfile::TempDir;
 
@@ -171,9 +172,7 @@ fn test_concurrent_access_saves_all_pearls() {
             std::thread::spawn(move || {
                 let mut storage = Storage::new(path).expect("Failed to create storage");
                 let pearl = Pearl::new(format!("Pearl {}", i), "author".to_string());
-                storage
-                    .with_lock(|storage| storage.save(&pearl))
-                    .expect("Failed to save pearl");
+                storage.save(&pearl).expect("Failed to save pearl");
             })
         })
         .collect();
@@ -222,4 +221,77 @@ fn test_large_repository_listing() {
 
     let captured = formatter.captured.lock().expect("capture lock");
     assert_eq!(captured.len(), 2000, "Expected all pearls in list");
+}
+
+#[test]
+fn test_concurrent_cli_writes_are_serialized_without_data_loss() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    Repository::init(temp_dir.path()).expect("Failed to init git repo");
+    let prl_bin = env!("CARGO_BIN_EXE_prl");
+
+    let init = Command::new(prl_bin)
+        .arg("init")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to run prl init");
+    assert!(
+        init.status.success(),
+        "prl init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let issues_path = temp_dir.path().join(".pearls/issues.jsonl");
+    let mut storage = Storage::new(issues_path).expect("Failed to create storage");
+    let pearl = Pearl::new("Concurrency target".to_string(), "author".to_string());
+    let pearl_id = pearl.id.clone();
+    storage.save(&pearl).expect("Failed to seed pearl");
+
+    let total_writes = 80;
+    let mut handles = Vec::with_capacity(total_writes);
+    for i in 0..total_writes {
+        let repo = temp_dir.path().to_path_buf();
+        let id = pearl_id.clone();
+        let bin = prl_bin.to_string();
+        handles.push(std::thread::spawn(move || {
+            Command::new(bin)
+                .arg("comments")
+                .arg("add")
+                .arg(id)
+                .arg(format!("race-note-{i}"))
+                .current_dir(repo)
+                .output()
+                .expect("Failed to run prl comments add")
+        }));
+    }
+
+    let mut failures = Vec::new();
+    for handle in handles {
+        let output = handle.join().expect("writer thread panicked");
+        if !output.status.success() {
+            failures.push(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "Concurrent writes failed: {}",
+        failures.join(" | ")
+    );
+
+    let mut check_storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let reloaded = check_storage
+        .load_by_id(&pearl_id)
+        .expect("Failed to load updated pearl");
+    assert_eq!(
+        reloaded.comments.len(),
+        total_writes,
+        "All concurrent comments should be persisted"
+    );
+
+    let issues_content = fs::read_to_string(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to read issues");
+    for line in issues_content.lines() {
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(line);
+        assert!(parsed.is_ok(), "Each JSONL line must be valid JSON");
+    }
 }

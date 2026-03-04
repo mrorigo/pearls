@@ -35,29 +35,31 @@ pub fn execute(from: String, to: String) -> Result<()> {
     }
 
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let mut pearls = storage.load_all()?;
+    let (from_id, to_id) = storage.with_lock(|storage| {
+        let mut pearls = storage.load_all()?;
+        let from_id = resolve_id(&from, &pearls)?;
+        let to_id = resolve_id(&to, &pearls)?;
 
-    let from_id = resolve_id(&from, &pearls)?;
-    let to_id = resolve_id(&to, &pearls)?;
+        let from_index = pearls
+            .iter()
+            .position(|pearl| pearl.id == from_id)
+            .ok_or_else(|| anyhow::anyhow!("Pearl '{}' not found", from_id))?;
 
-    let from_index = pearls
-        .iter()
-        .position(|pearl| pearl.id == from_id)
-        .ok_or_else(|| anyhow::anyhow!("Pearl '{}' not found", from_id))?;
+        let mut updated = pearls[from_index].clone();
+        let initial_len = updated.deps.len();
+        updated.deps.retain(|dep| dep.target_id != to_id);
 
-    let mut updated = pearls[from_index].clone();
-    let initial_len = updated.deps.len();
-    updated.deps.retain(|dep| dep.target_id != to_id);
+        if updated.deps.len() == initial_len {
+            anyhow::bail!("No dependency found between {} and {}", from_id, to_id);
+        }
 
-    if updated.deps.len() == initial_len {
-        anyhow::bail!("No dependency found between {} and {}", from_id, to_id);
-    }
+        pearls[from_index] = updated.clone();
+        IssueGraph::from_pearls(pearls.clone())?;
 
-    pearls[from_index] = updated.clone();
-    IssueGraph::from_pearls(pearls.clone())?;
-
-    updated.validate()?;
-    storage.save(&updated)?;
+        updated.validate()?;
+        storage.save(&updated)?;
+        Ok((from_id, to_id))
+    })?;
 
     if is_json_output() {
         println!(

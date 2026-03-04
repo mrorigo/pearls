@@ -27,16 +27,20 @@ pub fn add(id: String, body: String, author: Option<String>) -> Result<()> {
     }
 
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let full_id = identity::resolve_partial_id(&id, &pearls)?;
-    let mut pearl = storage.load_by_id(&full_id)?;
+    let (comment_id, pearl_id) = storage.with_lock(|storage| -> Result<(String, String)> {
+        let pearls = storage.load_all()?;
+        let full_id = identity::resolve_partial_id(&id, &pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
 
-    let author = author
-        .or_else(default_author)
-        .unwrap_or_else(|| "unknown".to_string());
-    let comment_id = pearl.add_comment(author, body)?;
-    pearl.validate()?;
-    storage.save(&pearl)?;
+        let author = author
+            .clone()
+            .or_else(default_author)
+            .unwrap_or_else(|| "unknown".to_string());
+        let comment_id = pearl.add_comment(author, body.clone())?;
+        pearl.validate()?;
+        storage.save(&pearl)?;
+        Ok((comment_id, pearl.id.clone()))
+    })?;
 
     if is_json_output() {
         println!(
@@ -44,12 +48,12 @@ pub fn add(id: String, body: String, author: Option<String>) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "status": "ok",
                 "action": "comment_add",
-                "id": pearl.id,
+                "id": pearl_id,
                 "comment_id": comment_id
             }))?
         );
     } else {
-        println!("✓ Added comment {} to {}", comment_id, pearl.id);
+        println!("✓ Added comment {} to {}", comment_id, pearl_id);
     }
     Ok(())
 }
@@ -115,35 +119,39 @@ pub fn delete(id: String, comment_id: String) -> Result<()> {
     }
 
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let full_id = identity::resolve_partial_id(&id, &pearls)?;
-    let mut pearl = storage.load_by_id(&full_id)?;
+    let (resolved_comment_id, pearl_id) =
+        storage.with_lock(|storage| -> Result<(String, String)> {
+            let pearls = storage.load_all()?;
+            let full_id = identity::resolve_partial_id(&id, &pearls)?;
+            let mut pearl = storage.load_by_id(&full_id)?;
 
-    let resolved_comment_id = resolve_comment_id(&comment_id, &pearl.comments)?;
-    if !pearl.delete_comment(&resolved_comment_id) {
-        anyhow::bail!(
-            "Comment '{}' not found for Pearl {}",
-            resolved_comment_id,
-            pearl.id
-        );
-    }
+            let resolved_comment_id = resolve_comment_id(&comment_id, &pearl.comments)?;
+            if !pearl.delete_comment(&resolved_comment_id) {
+                anyhow::bail!(
+                    "Comment '{}' not found for Pearl {}",
+                    resolved_comment_id,
+                    pearl.id
+                );
+            }
 
-    pearl.validate()?;
-    storage.save(&pearl)?;
+            pearl.validate()?;
+            storage.save(&pearl)?;
+            Ok((resolved_comment_id, pearl.id.clone()))
+        })?;
     if is_json_output() {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "status": "ok",
                 "action": "comment_delete",
-                "id": pearl.id,
+                "id": pearl_id,
                 "comment_id": resolved_comment_id
             }))?
         );
     } else {
         println!(
             "✓ Deleted comment {} from {}",
-            resolved_comment_id, pearl.id
+            resolved_comment_id, pearl_id
         );
     }
 

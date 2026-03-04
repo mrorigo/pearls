@@ -51,80 +51,72 @@ pub fn execute(
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    // Load all Pearls to resolve partial ID
+    // Resolve, update, and save while holding the storage lock.
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let all_pearls = storage.load_all()?;
+    let pearl = storage.with_lock(|storage| {
+        let all_pearls = storage.load_all()?;
+        let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
 
-    // Resolve partial ID
-    let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
-
-    // Load the specific Pearl
-    let mut pearl = storage.load_by_id(&full_id)?;
-
-    // Apply updates
-    if let Some(new_title) = title {
-        pearl.title = new_title;
-    }
-
-    let mut provided_description = description;
-    if let Some(desc_path) = description_file {
-        provided_description = Some(read_description_from_path(&desc_path)?);
-    }
-
-    if let Some(new_description) = provided_description {
-        enforce_description_limit(&new_description)?;
-        pearl.description = new_description;
-    }
-
-    if let Some(new_priority) = priority {
-        if new_priority > 4 {
-            anyhow::bail!("Priority must be 0-4, got {}", new_priority);
+        if let Some(new_title) = title.clone() {
+            pearl.title = new_title;
         }
-        pearl.priority = new_priority;
-    }
 
-    if let Some(new_status) = status {
-        let new_status_enum = match new_status.to_lowercase().as_str() {
-            "open" => pearls_core::Status::Open,
-            "in_progress" | "in-progress" => pearls_core::Status::InProgress,
-            "blocked" => pearls_core::Status::Blocked,
-            "deferred" => pearls_core::Status::Deferred,
-            "closed" => pearls_core::Status::Closed,
-            _ => anyhow::bail!("Invalid status: {}", new_status),
-        };
-        let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
-        pearls_core::fsm::validate_transition(&pearl, new_status_enum, &graph)?;
-        pearl.status = new_status_enum;
-    }
+        let mut provided_description = description.clone();
+        if let Some(desc_path) = description_file.clone() {
+            provided_description = Some(read_description_from_path(&desc_path)?);
+        }
 
-    // Handle label updates
-    if !add_labels.is_empty() {
-        for label in &add_labels {
-            if !pearl.labels.contains(label) {
-                pearl.labels.push(label.clone());
+        if let Some(new_description) = provided_description {
+            enforce_description_limit(&new_description)?;
+            pearl.description = new_description;
+        }
+
+        if let Some(new_priority) = priority {
+            if new_priority > 4 {
+                anyhow::bail!("Priority must be 0-4, got {}", new_priority);
+            }
+            pearl.priority = new_priority;
+        }
+
+        if let Some(new_status) = status.clone() {
+            let new_status_enum = match new_status.to_lowercase().as_str() {
+                "open" => pearls_core::Status::Open,
+                "in_progress" | "in-progress" => pearls_core::Status::InProgress,
+                "blocked" => pearls_core::Status::Blocked,
+                "deferred" => pearls_core::Status::Deferred,
+                "closed" => pearls_core::Status::Closed,
+                _ => anyhow::bail!("Invalid status: {}", new_status),
+            };
+            let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
+            pearls_core::fsm::validate_transition(&pearl, new_status_enum, &graph)?;
+            pearl.status = new_status_enum;
+        }
+
+        if !add_labels.is_empty() {
+            for label in &add_labels {
+                if !pearl.labels.contains(label) {
+                    pearl.labels.push(label.clone());
+                }
             }
         }
-    }
 
-    if !remove_labels.is_empty() {
-        for label in &remove_labels {
-            pearl.labels.retain(|l| l != label);
+        if !remove_labels.is_empty() {
+            for label in &remove_labels {
+                pearl.labels.retain(|l| l != label);
+            }
         }
-    }
 
-    // Update the updated_at timestamp
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-    pearl.updated_at = now;
-
-    // Validate Pearl
-    pearl.validate()?;
-
-    // Save to storage
-    if !add_labels.is_empty() {
-        suggest_labels(&storage, &add_labels)?;
-    }
-    storage.save(&pearl)?;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+        pearl.updated_at = now;
+        pearl.validate()?;
+        if !add_labels.is_empty() {
+            suggest_labels(storage, &add_labels)?;
+        }
+        storage.save(&pearl)?;
+        Ok(pearl)
+    })?;
 
     if is_json_output() {
         println!(

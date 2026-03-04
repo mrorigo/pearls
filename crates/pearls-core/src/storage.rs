@@ -6,11 +6,19 @@
 //! with support for streaming, indexing, and file locking.
 
 use crate::{Error, Pearl, Result};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const INDEX_MAGIC: [u8; 8] = *b"PRLIDX1\0";
 const INDEX_VERSION: u8 = 1;
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static REENTRANT_LOCK_DEPTHS: RefCell<HashMap<PathBuf, usize>> = RefCell::new(HashMap::new());
+}
 
 fn invalid_index_error(message: &str) -> Error {
     Error::Io(std::io::Error::new(
@@ -556,22 +564,8 @@ impl Storage {
     /// - The file cannot be read or written
     /// - The atomic write operation fails
     pub fn save(&mut self, pearl: &Pearl) -> Result<()> {
-        pearl.validate()?;
-
-        // Load all existing Pearls
-        let mut pearls = self.load_all().unwrap_or_default();
-
-        // Find and update or append
-        if let Some(pos) = pearls.iter().position(|p| p.id == pearl.id) {
-            pearls[pos] = pearl.clone();
-        } else {
-            pearls.push(pearl.clone());
-        }
-
-        // Write all Pearls atomically
-        self.save_all(&pearls)?;
-
-        Ok(())
+        let pearl_to_save = pearl.clone();
+        self.with_lock(move |storage| storage.save_unlocked(&pearl_to_save))
     }
 
     /// Saves multiple Pearls to the JSONL file.
@@ -594,41 +588,8 @@ impl Storage {
     /// - The file cannot be written
     /// - The atomic write operation fails
     pub fn save_all(&mut self, pearls: &[Pearl]) -> Result<()> {
-        use std::fs::File;
-        use std::io::Write;
-
-        // Validate all Pearls first
-        for pearl in pearls {
-            pearl.validate()?;
-        }
-
-        // Create temp file in the same directory for atomic rename
-        let temp_path = self.path.with_extension("jsonl.tmp");
-
-        // Write to temp file
-        {
-            let mut file = File::create(&temp_path)?;
-
-            for pearl in pearls {
-                // Serialize to single line (no newlines within JSON)
-                let json = serde_json::to_string(pearl)?;
-                file.write_all(json.as_bytes())?;
-                file.write_all(b"\n")?;
-            }
-
-            file.sync_all()?;
-        }
-
-        // Atomic rename
-        std::fs::rename(&temp_path, &self.path)?;
-
-        // Update index if enabled
-        if let Some(index) = self.index.as_mut() {
-            index.rebuild(&self.path)?;
-            index.save()?;
-        }
-
-        Ok(())
+        let pearls_to_save = pearls.to_vec();
+        self.with_lock(move |storage| storage.save_all_unlocked(&pearls_to_save))
     }
 }
 
@@ -653,21 +614,28 @@ impl Storage {
     /// - The lock cannot be acquired within the timeout
     /// - The closure returns an error
     /// - The lock cannot be released
-    pub fn with_lock<F, T>(&mut self, f: F) -> Result<T>
+    pub fn with_lock<F, T, E>(&mut self, f: F) -> std::result::Result<T, E>
     where
-        F: FnOnce(&mut Storage) -> Result<T>,
+        F: FnOnce(&mut Storage) -> std::result::Result<T, E>,
+        E: From<Error>,
     {
         use fs2::FileExt;
-        use std::fs::OpenOptions;
         use std::time::{Duration, Instant};
 
         // Create or open the lock file
         let lock_path = self.path.with_extension("lock");
+        let reentrant_guard = ReentrantLockGuard::acquire(lock_path.clone());
+        if reentrant_guard.was_held() {
+            return f(self);
+        }
+
         let lock_file = OpenOptions::new()
             .create(true)
+            .read(true)
             .write(true)
-            .truncate(true)
-            .open(&lock_path)?;
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|err| E::from(Error::Io(err)))?;
 
         // Try to acquire exclusive lock with timeout.
         // fs2 does not support timeouts directly, so we retry with backoff.
@@ -678,10 +646,10 @@ impl Storage {
                 Ok(()) => break,
                 Err(err) => {
                     if start.elapsed() >= timeout {
-                        return Err(Error::Io(std::io::Error::new(
+                        return Err(E::from(Error::Io(std::io::Error::new(
                             std::io::ErrorKind::WouldBlock,
                             format!("Failed to acquire lock: {}", err),
-                        )));
+                        ))));
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
@@ -695,6 +663,45 @@ impl Storage {
         let _ = lock_file.unlock();
 
         result
+    }
+}
+
+struct ReentrantLockGuard {
+    path: PathBuf,
+    was_held: bool,
+}
+
+impl ReentrantLockGuard {
+    fn acquire(path: PathBuf) -> Self {
+        let was_held = REENTRANT_LOCK_DEPTHS.with(|locks| {
+            let mut locks = locks.borrow_mut();
+            if let Some(depth) = locks.get_mut(&path) {
+                *depth += 1;
+                true
+            } else {
+                locks.insert(path.clone(), 1);
+                false
+            }
+        });
+        Self { path, was_held }
+    }
+
+    fn was_held(&self) -> bool {
+        self.was_held
+    }
+}
+
+impl Drop for ReentrantLockGuard {
+    fn drop(&mut self) {
+        REENTRANT_LOCK_DEPTHS.with(|locks| {
+            let mut locks = locks.borrow_mut();
+            if let Some(depth) = locks.get_mut(&self.path) {
+                *depth -= 1;
+                if *depth == 0 {
+                    locks.remove(&self.path);
+                }
+            }
+        });
     }
 }
 
@@ -718,21 +725,24 @@ impl Storage {
     /// - The file cannot be read or written
     /// - The Pearl is not found
     pub fn delete(&mut self, id: &str) -> Result<()> {
-        // Load all Pearls
-        let mut pearls = self.load_all()?;
+        let target_id = id.to_string();
+        self.with_lock(move |storage| {
+            // Load all Pearls
+            let mut pearls = storage.load_all()?;
 
-        // Find and remove the Pearl
-        let initial_len = pearls.len();
-        pearls.retain(|p| p.id != id);
+            // Find and remove the Pearl
+            let initial_len = pearls.len();
+            pearls.retain(|p| p.id != target_id);
 
-        if pearls.len() == initial_len {
-            return Err(Error::NotFound(id.to_string()));
-        }
+            if pearls.len() == initial_len {
+                return Err(Error::NotFound(target_id.clone()));
+            }
 
-        // Write remaining Pearls
-        self.save_all(&pearls)?;
+            // Write remaining Pearls
+            storage.save_all_unlocked(&pearls)?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Rebuilds the index from the JSONL file if indexing is enabled.
@@ -755,5 +765,90 @@ impl Storage {
                 "Indexing is not enabled",
             )))
         }
+    }
+}
+
+impl Storage {
+    fn save_unlocked(&mut self, pearl: &Pearl) -> Result<()> {
+        pearl.validate()?;
+
+        // Load all existing Pearls while lock is held.
+        let mut pearls = self.load_all().unwrap_or_default();
+
+        // Find and update or append.
+        if let Some(pos) = pearls.iter().position(|p| p.id == pearl.id) {
+            pearls[pos] = pearl.clone();
+        } else {
+            pearls.push(pearl.clone());
+        }
+
+        self.save_all_unlocked(&pearls)
+    }
+
+    fn save_all_unlocked(&mut self, pearls: &[Pearl]) -> Result<()> {
+        use std::io::Write;
+
+        // Validate all Pearls first.
+        for pearl in pearls {
+            pearl.validate()?;
+        }
+
+        let (temp_path, mut file) = self.create_temp_file()?;
+        let write_result = (|| -> Result<()> {
+            for pearl in pearls {
+                // Serialize to single line (no newlines within JSON).
+                let json = serde_json::to_string(pearl)?;
+                file.write_all(json.as_bytes())?;
+                file.write_all(b"\n")?;
+            }
+            file.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(err) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(err);
+        }
+
+        std::fs::rename(&temp_path, &self.path)?;
+
+        // Update index if enabled.
+        if let Some(index) = self.index.as_mut() {
+            index.rebuild(&self.path)?;
+            index.save()?;
+        }
+
+        Ok(())
+    }
+
+    fn create_temp_file(&self) -> Result<(PathBuf, std::fs::File)> {
+        const MAX_TEMP_FILE_ATTEMPTS: u64 = 128;
+
+        for _ in 0..MAX_TEMP_FILE_ATTEMPTS {
+            let temp_path = self.unique_temp_path();
+            match OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temp_path)
+            {
+                Ok(file) => return Ok((temp_path, file)),
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(Error::Io(err)),
+            }
+        }
+
+        Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "Failed to allocate unique temp file for storage write",
+        )))
+    }
+
+    fn unique_temp_path(&self) -> PathBuf {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0_u128, |duration| duration.as_nanos());
+        let temp_extension = format!("jsonl.tmp.{}.{}.{}", std::process::id(), nanos, counter);
+        self.path.with_extension(temp_extension)
     }
 }

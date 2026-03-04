@@ -37,44 +37,45 @@ pub fn execute(from: String, to: String, dep_type: String) -> Result<()> {
     }
 
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let mut pearls = storage.load_all()?;
-
-    let from_id = resolve_id(&from, &pearls)?;
-    let to_id = resolve_id(&to, &pearls)?;
-
-    if from_id == to_id {
-        anyhow::bail!("Cannot link a Pearl to itself.");
-    }
-
     let dep_type = parse_dep_type(&dep_type)?;
+    let (from_id, to_id) = storage.with_lock(|storage| {
+        let mut pearls = storage.load_all()?;
+        let from_id = resolve_id(&from, &pearls)?;
+        let to_id = resolve_id(&to, &pearls)?;
 
-    let from_index = pearls
-        .iter()
-        .position(|pearl| pearl.id == from_id)
-        .ok_or_else(|| anyhow::anyhow!("Pearl '{}' not found", from_id))?;
+        if from_id == to_id {
+            anyhow::bail!("Cannot link a Pearl to itself.");
+        }
 
-    let mut updated = pearls[from_index].clone();
-    if updated
-        .deps
-        .iter()
-        .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
-    {
-        anyhow::bail!(
-            "Dependency already exists between {} and {}",
-            from_id,
-            to_id
-        );
-    }
+        let from_index = pearls
+            .iter()
+            .position(|pearl| pearl.id == from_id)
+            .ok_or_else(|| anyhow::anyhow!("Pearl '{}' not found", from_id))?;
 
-    updated.deps.push(Dependency {
-        target_id: to_id.clone(),
-        dep_type,
-    });
-    pearls[from_index] = updated.clone();
+        let mut updated = pearls[from_index].clone();
+        if updated
+            .deps
+            .iter()
+            .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
+        {
+            anyhow::bail!(
+                "Dependency already exists between {} and {}",
+                from_id,
+                to_id
+            );
+        }
 
-    IssueGraph::from_pearls(pearls.clone())?;
-    updated.validate()?;
-    storage.save(&updated)?;
+        updated.deps.push(Dependency {
+            target_id: to_id.clone(),
+            dep_type,
+        });
+        pearls[from_index] = updated.clone();
+
+        IssueGraph::from_pearls(pearls.clone())?;
+        updated.validate()?;
+        storage.save(&updated)?;
+        Ok((from_id, to_id))
+    })?;
 
     if is_json_output() {
         println!(

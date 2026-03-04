@@ -83,22 +83,23 @@ pub fn set(id: String, key: String, value: String) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let full_id = identity::resolve_partial_id(&id, &pearls)?;
-    let mut pearl = storage.load_by_id(&full_id)?;
-
     let parsed: serde_json::Value = serde_json::from_str(&value)
         .map_err(|e| anyhow::anyhow!("Metadata value must be valid JSON: {}", e))?;
+    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let pearl_id = storage.with_lock(|storage| -> Result<String> {
+        let pearls = storage.load_all()?;
+        let full_id = identity::resolve_partial_id(&id, &pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
 
-    pearl.metadata.insert(key.clone(), parsed);
+        pearl.metadata.insert(key.clone(), parsed.clone());
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+        pearl.updated_at = now;
 
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-    pearl.updated_at = now;
-
-    pearl.validate()?;
-    storage.save(&pearl)?;
+        pearl.validate()?;
+        storage.save(&pearl)?;
+        Ok(pearl.id.clone())
+    })?;
 
     if is_json_output() {
         println!(
@@ -106,12 +107,12 @@ pub fn set(id: String, key: String, value: String) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "status": "ok",
                 "action": "meta_set",
-                "id": pearl.id,
+                "id": pearl_id,
                 "key": key
             }))?
         );
     } else {
-        println!("✓ Updated metadata for {}", pearl.id);
+        println!("✓ Updated metadata for {}", pearl_id);
     }
     Ok(())
 }

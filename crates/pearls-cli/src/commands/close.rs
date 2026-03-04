@@ -35,33 +35,24 @@ pub fn execute(id: String) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    // Load all Pearls to resolve partial ID and build graph
+    // Resolve, validate, and save while holding the storage lock.
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let all_pearls = storage.load_all()?;
+    let pearl = storage.with_lock(|storage| -> Result<pearls_core::Pearl> {
+        let all_pearls = storage.load_all()?;
+        let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
+        let mut pearl = storage.load_by_id(&full_id)?;
 
-    // Resolve partial ID
-    let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
+        let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
+        pearls_core::fsm::validate_transition(&pearl, Status::Closed, &graph)?;
 
-    // Load the specific Pearl
-    let mut pearl = storage.load_by_id(&full_id)?;
-
-    // Build the dependency graph
-    let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
-
-    // Validate the transition to closed
-    pearls_core::fsm::validate_transition(&pearl, Status::Closed, &graph)?;
-
-    // Update status and timestamp
-    pearl.status = Status::Closed;
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-    pearl.updated_at = now;
-
-    // Validate Pearl
-    pearl.validate()?;
-
-    // Save to storage
-    storage.save(&pearl)?;
+        pearl.status = Status::Closed;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+        pearl.updated_at = now;
+        pearl.validate()?;
+        storage.save(&pearl)?;
+        Ok(pearl)
+    })?;
 
     if is_json_output() {
         println!(
