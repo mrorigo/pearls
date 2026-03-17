@@ -16,7 +16,7 @@ use std::path::Path;
 ///
 /// * `title` - The Pearl title
 /// * `description` - Optional description
-/// * `priority` - Optional priority (0-4)
+/// * `priority` - Optional priority (0-max_priority)
 /// * `labels` - Optional labels
 /// * `author` - Optional author (defaults to Git config or system username)
 ///
@@ -68,8 +68,8 @@ pub fn execute(
     }
 
     if let Some(p) = priority {
-        if p > 4 {
-            anyhow::bail!("Priority must be 0-4, got {}", p);
+        if p > config.max_priority {
+            anyhow::bail!("Priority must be 0-{}, got {}", config.max_priority, p);
         }
         pearl.priority = p;
     } else {
@@ -105,7 +105,7 @@ pub fn execute(
         if !pearl.description.is_empty() {
             println!("  Description: {}", pearl.description);
         }
-        if pearl.priority != 2 {
+        if pearl.priority != config.default_priority {
             println!("  Priority: {}", pearl.priority);
         }
         if !pearl.labels.is_empty() {

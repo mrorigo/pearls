@@ -66,5 +66,5 @@ prl status --detailed
 
 ## Files and config
 - Data lives in `.pearls/issues.jsonl`; archived items in `.pearls/archive.jsonl`.
-- Config lives at `.pearls/config.toml`; environment overrides include `PEARLS_DEFAULT_PRIORITY` and related keys.
+- Config lives at `.pearls/config.toml`; environment overrides include `PEARLS_DEFAULT_PRIORITY`, `PEARLS_MAX_PRIORITY`, and related keys.
 - Use `prl list --format json` for machine-readable output.

@@ -53,7 +53,7 @@ pub struct CreateItem {
     pub title: String,
     /// Description of the Pearl.
     pub description: Option<String>,
-    /// Priority level (0-4).
+    /// Priority level (0-max_priority, up to 31).
     pub priority: Option<u8>,
     /// Labels to assign.
     pub labels: Option<Vec<String>>,
@@ -100,7 +100,7 @@ pub struct UpdateInput {
     pub title: Option<String>,
     /// New description.
     pub description: Option<String>,
-    /// New priority (0-4).
+    /// New priority (0-max_priority, up to 31).
     pub priority: Option<u8>,
     /// New status.
     pub status: Option<String>,

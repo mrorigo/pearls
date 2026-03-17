@@ -6,7 +6,7 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
-use pearls_core::{Pearl, Storage};
+use pearls_core::{Config, Pearl, Storage};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -33,6 +33,7 @@ pub fn import_beads(path: String) -> Result<()> {
     if !pearls_dir.exists() {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
+    let config = Config::load(pearls_dir)?;
 
     let beads_path = PathBuf::from(path);
     if !beads_path.exists() {
@@ -61,6 +62,14 @@ pub fn import_beads(path: String) -> Result<()> {
                         "Warning: Skipping invalid Pearl on line {}: {}",
                         idx + 1,
                         err
+                    );
+                } else if pearl.priority > config.max_priority {
+                    skipped += 1;
+                    eprintln!(
+                        "Warning: Skipping Pearl on line {}: priority {} exceeds configured max_priority {}",
+                        idx + 1,
+                        pearl.priority,
+                        config.max_priority
                     );
                 } else {
                     pearls.push(pearl);
