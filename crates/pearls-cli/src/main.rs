@@ -15,6 +15,8 @@ pub mod terminal;
 
 pub use output::{create_formatter, OutputFormatter};
 pub use output_mode::set_json_output;
+pub use pearls_app::RepoContext;
+pub use pearls_core::{Config, OutputFormat as CoreOutputFormat};
 pub use terminal::{get_terminal_width, should_use_color, wrap_text};
 
 #[derive(Parser, Debug)]
@@ -373,6 +375,17 @@ enum CommentAction {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Load config to get default output format if not specified
+    let config = if let Some(config_path) = &cli.config {
+        // Use custom config path if provided (as a directory containing config.toml)
+        Config::load(std::path::Path::new(config_path)).unwrap_or_default()
+    } else {
+        match RepoContext::discover(None) {
+            Ok(repo) => repo.load_config().unwrap_or_default(),
+            Err(_) => Config::default(),
+        }
+    };
+
     // Determine output format and color usage
     let use_color = !cli.no_color && should_use_color();
     let format = match cli.format {
@@ -383,7 +396,11 @@ fn main() -> anyhow::Result<()> {
             if cli.json {
                 "json"
             } else {
-                "table"
+                match config.output_format {
+                    CoreOutputFormat::Json => "json",
+                    CoreOutputFormat::Table => "table",
+                    CoreOutputFormat::Plain => "plain",
+                }
             }
         }
     };
