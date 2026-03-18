@@ -115,7 +115,7 @@ pub fn execute(
         pearl.updated_at = now;
         pearl.validate()?;
         if !add_labels.is_empty() {
-            suggest_labels(storage, &add_labels)?;
+            super::utils::suggest_labels(storage, &add_labels)?;
         }
         storage.save(&pearl)?;
         Ok(pearl)
@@ -165,33 +165,3 @@ fn enforce_description_limit(description: &str) -> Result<()> {
     Ok(())
 }
 
-fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
-    let existing = storage.load_all().unwrap_or_default();
-    if existing.is_empty() {
-        return Ok(());
-    }
-    let existing_labels: Vec<String> = existing
-        .iter()
-        .flat_map(|pearl| pearl.labels.clone())
-        .collect();
-    if existing_labels.is_empty() {
-        return Ok(());
-    }
-    let lower_existing: std::collections::HashSet<String> = existing_labels
-        .iter()
-        .map(|label| label.to_lowercase())
-        .collect();
-    let mut missing = Vec::new();
-    for label in labels {
-        if !lower_existing.contains(&label.to_lowercase()) {
-            missing.push(label.clone());
-        }
-    }
-    if !missing.is_empty() {
-        eprintln!(
-            "Label suggestions: existing labels include {}",
-            existing_labels.join(", ")
-        );
-    }
-    Ok(())
-}

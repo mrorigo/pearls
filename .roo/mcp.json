@@ -1,0 +1,15 @@
+{
+	"mcpServers": {
+		"pearls": {
+			"command": "/Users/origo/.cargo/bin/prl",
+			"args": [
+				"mcp",
+				"--repo",
+				"/Users/origo/src/pearls"
+			],
+			"disabled": false,
+			"alwaysAllow": [],
+			"timeout": 15
+		}
+	}
+}

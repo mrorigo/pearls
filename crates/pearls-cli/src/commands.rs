@@ -20,3 +20,4 @@ pub mod status;
 pub mod sync;
 pub mod unlink;
 pub mod update;
+pub mod utils;
