@@ -166,7 +166,7 @@ When in doubt, call `show` on the `from` Pearl and verify the `deps` list includ
 Pearls are issues with:
 - A stable ID (`prl-xxxxxx`)
 - A status (Open, InProgress, Blocked, Deferred, Closed)
-- Priority (`P0` to `P4`)
+- Priority (numeric, default range `0` to `4`)
 - Labels, dependencies, metadata
 - Author and timestamps
 
@@ -490,7 +490,8 @@ prl show prl-abc123 --absolute-time
 The config file lives at `.pearls/config.toml`.
 
 Key options:
-- `default_priority` (0-4)
+- `default_priority` (0-`max_priority`)
+- `max_priority` (0-31, default `4`)
 - `compact_threshold_days`
 - `use_index`
 - `output_format` (`json`, `table`, `plain`)
@@ -498,6 +499,7 @@ Key options:
 
 Environment overrides:
 - `PEARLS_DEFAULT_PRIORITY`
+- `PEARLS_MAX_PRIORITY`
 - `PEARLS_COMPACT_THRESHOLD_DAYS`
 - `PEARLS_USE_INDEX`
 - `PEARLS_OUTPUT_FORMAT`

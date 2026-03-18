@@ -250,10 +250,10 @@ impl PearlsMcp {
             }
 
             if let Some(priority) = item.priority {
-                if priority > 4 {
+                if priority > config.max_priority {
                     return Err(AppError::InvalidInput(format!(
-                        "Priority must be 0-4, got {}",
-                        priority
+                        "Priority must be 0-{}, got {}",
+                        config.max_priority, priority
                     )));
                 }
                 pearl.priority = priority;
@@ -295,6 +295,7 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
+        let config = repo.load_config()?;
         let mut storage = repo.open_storage()?;
         let mut pearls = storage.load_all()?;
         let full_id = resolve_pearl_id(&input.id, &pearls)?;
@@ -312,10 +313,10 @@ impl PearlsMcp {
             pearl.description = description;
         }
         if let Some(priority) = input.priority {
-            if priority > 4 {
+            if priority > config.max_priority {
                 return Err(AppError::InvalidInput(format!(
-                    "Priority must be 0-4, got {}",
-                    priority
+                    "Priority must be 0-{}, got {}",
+                    config.max_priority, priority
                 )));
             }
             pearl.priority = priority;
@@ -1274,6 +1275,66 @@ mod tests {
             .ready_tool(ReadyInput { limit: None })
             .expect("ready failed");
         assert!(ready.ready.is_empty());
+    }
+
+    #[test]
+    fn test_priority_respects_configured_max_for_create_and_update() {
+        let temp = init_repo();
+        let pearls_dir = temp.path().join(".pearls");
+        let mut config = Config::default();
+        config.default_priority = 1;
+        config.max_priority = 1;
+        config.save(&pearls_dir).expect("Failed to save config");
+
+        let server = server_for(&temp);
+
+        let create_error = server
+            .create_tool(CreateInput {
+                items: vec![CreateItem {
+                    title: "Too High".to_string(),
+                    description: None,
+                    priority: Some(2),
+                    labels: None,
+                    author: None,
+                }],
+            })
+            .expect_err("create should reject priority above max_priority");
+        assert!(
+            create_error
+                .to_string()
+                .contains("Priority must be 0-1, got 2"),
+            "Unexpected create error: {create_error}"
+        );
+
+        let created = server
+            .create_tool(CreateInput {
+                items: vec![CreateItem {
+                    title: "Allowed".to_string(),
+                    description: None,
+                    priority: Some(1),
+                    labels: None,
+                    author: None,
+                }],
+            })
+            .expect("create allowed priority failed");
+
+        let update_error = server
+            .update_tool(UpdateInput {
+                id: created.pearls[0].id.clone(),
+                title: None,
+                description: None,
+                priority: Some(2),
+                status: None,
+                add_labels: None,
+                remove_labels: None,
+            })
+            .expect_err("update should reject priority above max_priority");
+        assert!(
+            update_error
+                .to_string()
+                .contains("Priority must be 0-1, got 2"),
+            "Unexpected update error: {update_error}"
+        );
     }
 
     #[test]

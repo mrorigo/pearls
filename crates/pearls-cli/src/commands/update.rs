@@ -7,7 +7,7 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
-use pearls_core::Storage;
+use pearls_core::{Config, Storage};
 use std::path::Path;
 
 /// Updates a Pearl with the specified field changes.
@@ -17,7 +17,7 @@ use std::path::Path;
 /// * `id` - The Pearl ID (full or partial)
 /// * `title` - Optional new title
 /// * `description` - Optional new description
-/// * `priority` - Optional new priority (0-4)
+/// * `priority` - Optional new priority (0-max_priority)
 /// * `status` - Optional new status
 /// * `add_labels` - Labels to add
 /// * `remove_labels` - Labels to remove
@@ -51,6 +51,9 @@ pub fn execute(
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
+    let config = Config::load(pearls_dir)?;
+    let max_priority = config.max_priority;
+
     // Resolve, update, and save while holding the storage lock.
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
     let pearl = storage.with_lock(|storage| {
@@ -73,8 +76,8 @@ pub fn execute(
         }
 
         if let Some(new_priority) = priority {
-            if new_priority > 4 {
-                anyhow::bail!("Priority must be 0-4, got {}", new_priority);
+            if new_priority > max_priority {
+                anyhow::bail!("Priority must be 0-{}, got {}", max_priority, new_priority);
             }
             pearl.priority = new_priority;
         }

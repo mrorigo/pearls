@@ -48,7 +48,7 @@ fn arb_pearl() -> impl Strategy<Value = Pearl> {
         prop::string::string_regex("[a-zA-Z0-9 ]{1,100}").unwrap(),
         any::<String>(),
         arb_status(),
-        0u8..=4u8,
+        0u8..=31u8,
         1i64..1_000_000_000_000i64,
         1i64..1_000_000_000_000i64,
         prop::string::string_regex("[a-zA-Z0-9_-]{1,50}").unwrap(),
@@ -139,11 +139,11 @@ proptest! {
     /// **Validates: Requirements 2.4, 2.5, 2.6, 2.7, 2.8**
     ///
     /// For any Pearl, all fields must conform to their type constraints:
-    /// priority in range 0-4, status in valid enum, timestamps as positive integers,
+    /// priority in range 0-31, status in valid enum, timestamps as positive integers,
     /// labels as string array, dependencies as Dependency array.
     #[test]
     fn test_schema_conformance(pearl in arb_pearl()) {
-        prop_assert!(pearl.priority <= 4, "Priority must be 0-4, got {}", pearl.priority);
+        prop_assert!(pearl.priority <= 31, "Priority must be 0-31, got {}", pearl.priority);
         prop_assert!(pearl.created_at > 0, "created_at must be positive");
         prop_assert!(pearl.updated_at > 0, "updated_at must be positive");
 

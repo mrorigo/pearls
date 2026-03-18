@@ -70,7 +70,7 @@ pub struct Pearl {
     pub description: String,
     /// Current status in the FSM.
     pub status: Status,
-    /// Priority level (0=critical, 4=trivial).
+    /// Priority level (0=highest, default 2). Range is configurable via `max_priority` (up to 31).
     #[serde(default = "default_priority")]
     pub priority: u8,
     /// Unix timestamp of creation.
@@ -145,7 +145,7 @@ impl Pearl {
     ///
     /// Returns an error if:
     /// - Title is empty
-    /// - Priority is out of range (0-4)
+    /// - Priority is out of range (0-31)
     /// - ID format is invalid
     pub fn validate(&self) -> crate::Result<()> {
         if self.title.is_empty() {
@@ -154,9 +154,9 @@ impl Pearl {
             ));
         }
 
-        if self.priority > 4 {
+        if self.priority > 31 {
             return Err(crate::Error::InvalidPearl(format!(
-                "Priority must be 0-4, got {}",
+                "Priority must be 0-31, got {}",
                 self.priority
             )));
         }

@@ -75,7 +75,7 @@ enum Commands {
         #[arg(long)]
         description_file: Option<String>,
 
-        /// Priority level (0-4, default 2)
+        /// Priority level (0-max_priority, default from config)
         #[arg(long)]
         priority: Option<u8>,
 

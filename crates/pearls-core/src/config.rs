@@ -22,9 +22,13 @@ pub enum OutputFormat {
 /// Configuration for Pearls behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Default priority for new Pearls (0-4).
+    /// Default priority for new Pearls (0-`max_priority`).
     #[serde(default = "default_priority")]
     pub default_priority: u8,
+
+    /// Maximum allowed priority value (0-31).
+    #[serde(default = "default_max_priority")]
+    pub max_priority: u8,
 
     /// Number of days before closed Pearls are archived.
     #[serde(default = "default_compact_threshold")]
@@ -48,6 +52,11 @@ fn default_priority() -> u8 {
     2
 }
 
+/// Default maximum priority value.
+fn default_max_priority() -> u8 {
+    4
+}
+
 /// Default compaction threshold in days.
 fn default_compact_threshold() -> u32 {
     30
@@ -57,6 +66,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             default_priority: default_priority(),
+            max_priority: default_max_priority(),
             compact_threshold_days: default_compact_threshold(),
             use_index: false,
             output_format: OutputFormat::default(),
@@ -111,7 +121,8 @@ impl Config {
     /// Applies environment variable overrides to the configuration.
     ///
     /// Supported environment variables:
-    /// - `PEARLS_DEFAULT_PRIORITY` - Default priority (0-4)
+    /// - `PEARLS_DEFAULT_PRIORITY` - Default priority (0-`max_priority`)
+    /// - `PEARLS_MAX_PRIORITY` - Maximum priority value (0-31)
     /// - `PEARLS_COMPACT_THRESHOLD_DAYS` - Compaction threshold in days
     /// - `PEARLS_USE_INDEX` - Whether to use index file (true/false)
     /// - `PEARLS_OUTPUT_FORMAT` - Output format (json/table/plain)
@@ -127,9 +138,13 @@ impl Config {
     fn apply_env_overrides(&mut self) -> Result<()> {
         if let Ok(val) = std::env::var("PEARLS_DEFAULT_PRIORITY") {
             self.default_priority = val.parse().map_err(|_| {
-                crate::Error::InvalidPearl(
-                    "PEARLS_DEFAULT_PRIORITY must be a number 0-4".to_string(),
-                )
+                crate::Error::InvalidPearl("PEARLS_DEFAULT_PRIORITY must be a number".to_string())
+            })?;
+        }
+
+        if let Ok(val) = std::env::var("PEARLS_MAX_PRIORITY") {
+            self.max_priority = val.parse().map_err(|_| {
+                crate::Error::InvalidPearl("PEARLS_MAX_PRIORITY must be a number 0-31".to_string())
             })?;
         }
 
@@ -180,13 +195,21 @@ impl Config {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - default_priority is out of range (0-4)
+    /// - default_priority is out of range (0-`max_priority`)
+    /// - max_priority is out of range (0-31)
     /// - compact_threshold_days is zero
     fn validate(&self) -> Result<()> {
-        if self.default_priority > 4 {
+        if self.max_priority > 31 {
             return Err(crate::Error::InvalidPearl(format!(
-                "default_priority must be 0-4, got {}",
-                self.default_priority
+                "max_priority must be 0-31, got {}",
+                self.max_priority
+            )));
+        }
+
+        if self.default_priority > self.max_priority {
+            return Err(crate::Error::InvalidPearl(format!(
+                "default_priority must be 0-{}, got {}",
+                self.max_priority, self.default_priority
             )));
         }
 
@@ -234,6 +257,7 @@ mod tests {
 
     fn clear_all_env_vars() {
         std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
+        std::env::remove_var("PEARLS_MAX_PRIORITY");
         std::env::remove_var("PEARLS_COMPACT_THRESHOLD_DAYS");
         std::env::remove_var("PEARLS_USE_INDEX");
         std::env::remove_var("PEARLS_OUTPUT_FORMAT");
@@ -252,6 +276,7 @@ mod tests {
         run_env_test(|| {
             let config = Config::default();
             assert_eq!(config.default_priority, 2);
+            assert_eq!(config.max_priority, 4);
             assert_eq!(config.compact_threshold_days, 30);
             assert!(!config.use_index);
             assert_eq!(config.output_format, OutputFormat::Table);
@@ -276,6 +301,7 @@ mod tests {
             let config_path = temp_dir.path().join("config.toml");
             let content = r#"
 default_priority = 1
+max_priority = 7
 compact_threshold_days = 60
 use_index = true
 output_format = "json"
@@ -285,6 +311,7 @@ auto_close_on_commit = true
 
             let config = Config::load(temp_dir.path()).unwrap();
             assert_eq!(config.default_priority, 1);
+            assert_eq!(config.max_priority, 7);
             assert_eq!(config.compact_threshold_days, 60);
             assert!(config.use_index);
             assert_eq!(config.output_format, OutputFormat::Json);
@@ -298,6 +325,32 @@ auto_close_on_commit = true
             let temp_dir = TempDir::new().unwrap();
             let config_path = temp_dir.path().join("config.toml");
             let content = "default_priority = 5";
+            std::fs::write(&config_path, content).unwrap();
+
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_config_validation_invalid_max_priority() {
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = "max_priority = 32";
+            std::fs::write(&config_path, content).unwrap();
+
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
+    fn test_config_validation_default_priority_exceeds_max() {
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+            let config_path = temp_dir.path().join("config.toml");
+            let content = "default_priority = 5\nmax_priority = 4";
             std::fs::write(&config_path, content).unwrap();
 
             let result = Config::load(temp_dir.path());
@@ -337,6 +390,17 @@ auto_close_on_commit = true
             std::env::set_var("PEARLS_COMPACT_THRESHOLD_DAYS", "90");
             let config = Config::load(temp_dir.path()).unwrap();
             assert_eq!(config.compact_threshold_days, 90);
+        });
+    }
+
+    #[test]
+    fn test_config_env_override_max_priority() {
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+
+            std::env::set_var("PEARLS_MAX_PRIORITY", "31");
+            let config = Config::load(temp_dir.path()).unwrap();
+            assert_eq!(config.max_priority, 31);
         });
     }
 
@@ -385,6 +449,17 @@ auto_close_on_commit = true
     }
 
     #[test]
+    fn test_config_env_invalid_max_priority() {
+        run_env_test(|| {
+            let temp_dir = TempDir::new().unwrap();
+
+            std::env::set_var("PEARLS_MAX_PRIORITY", "invalid");
+            let result = Config::load(temp_dir.path());
+            assert!(result.is_err());
+        });
+    }
+
+    #[test]
     fn test_config_env_invalid_format() {
         run_env_test(|| {
             let temp_dir = TempDir::new().unwrap();
@@ -402,6 +477,7 @@ auto_close_on_commit = true
 
             let original = Config {
                 default_priority: 1,
+                max_priority: 7,
                 compact_threshold_days: 45,
                 use_index: true,
                 output_format: OutputFormat::Json,
@@ -412,6 +488,7 @@ auto_close_on_commit = true
             let loaded = Config::load(temp_dir.path()).unwrap();
 
             assert_eq!(original.default_priority, loaded.default_priority);
+            assert_eq!(original.max_priority, loaded.max_priority);
             assert_eq!(
                 original.compact_threshold_days,
                 loaded.compact_threshold_days

@@ -820,6 +820,104 @@ fn test_import_beads_writes_issues() {
 }
 
 #[test]
+fn test_create_rejects_priority_above_configured_max() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut config = pearls_core::Config::default();
+    config.default_priority = 1;
+    config.max_priority = 1;
+    config.save(&pearls_dir).expect("Failed to save config");
+
+    let error = pearls_cli::commands::create::execute(
+        "Too High".to_string(),
+        None,
+        None,
+        Some(2),
+        vec![],
+        Some("alice".to_string()),
+    )
+    .expect_err("Create should reject priority above max_priority");
+
+    assert!(
+        error.to_string().contains("Priority must be 0-1, got 2"),
+        "Unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_update_rejects_priority_above_configured_max() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut config = pearls_core::Config::default();
+    config.default_priority = 1;
+    config.max_priority = 1;
+    config.save(&pearls_dir).expect("Failed to save config");
+
+    let pearl = pearls_core::Pearl::new("Update target".to_string(), "alice".to_string());
+    let pearl_id = pearl.id.clone();
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&pearl).expect("Failed to save pearl");
+
+    let error = pearls_cli::commands::update::execute(
+        pearl_id,
+        None,
+        None,
+        None,
+        Some(2),
+        None,
+        vec![],
+        vec![],
+    )
+    .expect_err("Update should reject priority above max_priority");
+
+    assert!(
+        error.to_string().contains("Priority must be 0-1, got 2"),
+        "Unexpected error: {error}"
+    );
+}
+
+#[test]
+fn test_import_beads_skips_priorities_above_configured_max() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut config = pearls_core::Config::default();
+    config.default_priority = 1;
+    config.max_priority = 1;
+    config.save(&pearls_dir).expect("Failed to save config");
+
+    let mut allowed = pearls_core::Pearl::new("Allowed".to_string(), "alice".to_string());
+    allowed.priority = 1;
+    let mut too_high = pearls_core::Pearl::new("Too High".to_string(), "alice".to_string());
+    too_high.priority = 3;
+
+    let beads_path = temp_dir.path().join("beads.jsonl");
+    let payload = format!(
+        "{}\n{}\n",
+        serde_json::to_string(&allowed).expect("serialize allowed"),
+        serde_json::to_string(&too_high).expect("serialize too_high")
+    );
+    fs::write(&beads_path, payload).expect("Failed to write beads file");
+
+    pearls_cli::commands::import::import_beads(beads_path.to_string_lossy().to_string())
+        .expect("Import failed");
+
+    let storage = Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), 1, "Only one Pearl should be imported");
+    assert_eq!(
+        pearls[0].id, allowed.id,
+        "Only allowed priority should persist"
+    );
+}
+
+#[test]
 fn test_meta_set_updates_metadata() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let _guard = enter_dir(temp_dir.path());
