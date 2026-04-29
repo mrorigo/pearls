@@ -15,6 +15,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const INDEX_MAGIC: [u8; 8] = *b"PRLIDX1\0";
 const INDEX_VERSION: u8 = 1;
+const MAX_INDEX_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_INDEX_ENTRIES: u64 = 1_000_000;
+const MAX_INDEX_ID_BYTES: usize = 256;
+const MAX_JSONL_LINE_BYTES: usize = 16 * 1024 * 1024;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static REENTRANT_LOCK_DEPTHS: RefCell<HashMap<PathBuf, usize>> = RefCell::new(HashMap::new());
@@ -29,14 +33,24 @@ fn invalid_index_error(message: &str) -> Error {
 
 fn read_u32<R: std::io::Read>(reader: &mut R) -> Result<u32> {
     let mut buf = [0u8; 4];
-    reader.read_exact(&mut buf)?;
+    read_index_exact(reader, &mut buf)?;
     Ok(u32::from_le_bytes(buf))
 }
 
 fn read_u64<R: std::io::Read>(reader: &mut R) -> Result<u64> {
     let mut buf = [0u8; 8];
-    reader.read_exact(&mut buf)?;
+    read_index_exact(reader, &mut buf)?;
     Ok(u64::from_le_bytes(buf))
+}
+
+fn read_index_exact<R: std::io::Read>(reader: &mut R, buf: &mut [u8]) -> Result<()> {
+    reader.read_exact(buf).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::UnexpectedEof {
+            invalid_index_error("Truncated index file")
+        } else {
+            Error::Io(err)
+        }
+    })
 }
 
 fn write_u32<W: std::io::Write>(writer: &mut W, value: u32) -> Result<()> {
@@ -47,6 +61,154 @@ fn write_u32<W: std::io::Write>(writer: &mut W, value: u32) -> Result<()> {
 fn write_u64<W: std::io::Write>(writer: &mut W, value: u64) -> Result<()> {
     writer.write_all(&value.to_le_bytes())?;
     Ok(())
+}
+
+fn read_bounded_jsonl_line<R: std::io::BufRead>(
+    reader: &mut R,
+    path: &Path,
+    line_idx: usize,
+    buffer: &mut Vec<u8>,
+) -> Result<usize> {
+    buffer.clear();
+
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(buffer.len());
+        }
+
+        let take = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |pos| pos + 1);
+
+        if buffer.len().saturating_add(take) > MAX_JSONL_LINE_BYTES {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Pearl JSON line in {} at line {} exceeds {} bytes",
+                    path.display(),
+                    line_idx,
+                    MAX_JSONL_LINE_BYTES
+                ),
+            )));
+        }
+
+        let saw_newline = available[..take].last() == Some(&b'\n');
+        buffer.extend_from_slice(&available[..take]);
+        reader.consume(take);
+
+        if saw_newline {
+            return Ok(buffer.len());
+        }
+    }
+}
+
+fn normalize_lock_path(path: PathBuf) -> PathBuf {
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+    let Some(file_name) = path.file_name() else {
+        return path;
+    };
+
+    parent
+        .canonicalize()
+        .map(|canonical_parent| canonical_parent.join(file_name))
+        .unwrap_or(path)
+}
+
+fn normalize_managed_path(path: &Path, label: &str) -> Result<PathBuf> {
+    reject_managed_path_symlinks(path, label)?;
+
+    let Some(parent) = path.parent() else {
+        return Ok(path.to_path_buf());
+    };
+    let Some(file_name) = path.file_name() else {
+        return Ok(path.to_path_buf());
+    };
+
+    match parent.canonicalize() {
+        Ok(parent) => Ok(parent.join(file_name)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(err) => Err(Error::Io(err)),
+    }
+}
+
+fn unique_temp_path(path: &Path, marker: &str) -> PathBuf {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0_u128, |duration| duration.as_nanos());
+    let temp_extension = format!("{marker}.tmp.{}.{}.{}", std::process::id(), nanos, counter);
+    path.with_extension(temp_extension)
+}
+
+#[cfg(unix)]
+fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(Error::Io)
+}
+
+#[cfg(unix)]
+fn open_lock_no_follow(path: &Path) -> Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(Error::Io)
+}
+
+#[cfg(not(unix))]
+fn open_lock_no_follow(path: &Path) -> Result<std::fs::File> {
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(Error::Io)
+}
+
+#[cfg(not(unix))]
+fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
+    std::fs::File::open(path).map_err(Error::Io)
+}
+
+fn reject_managed_path_symlinks(path: &Path, label: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        match std::fs::symlink_metadata(parent) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{label} parent cannot be a symlink: {}", parent.display()),
+                )));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(Error::Io(err)),
+        }
+    }
+
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{label} cannot be a symlink: {}", path.display()),
+        ))),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(Error::Io(err)),
+    }
 }
 
 /// Optional index for fast Pearl lookups by ID.
@@ -71,10 +233,15 @@ impl Index {
     ///
     /// A new Index instance.
     pub fn new(path: PathBuf) -> Self {
+        let path = normalize_managed_path(&path, "Index file path").unwrap_or(path);
         Self {
             map: HashMap::new(),
             path,
         }
+    }
+
+    fn validate_path(path: &Path) -> Result<()> {
+        reject_managed_path_symlinks(path, "Index file path")
     }
 
     /// Loads an Index from disk, or returns an empty Index if the file does not exist.
@@ -91,37 +258,62 @@ impl Index {
     ///
     /// Returns an error if the file exists but is invalid or unreadable.
     pub fn load(path: PathBuf) -> Result<Self> {
-        use std::fs::File;
-        use std::io::Read;
+        Self::validate_path(&path)?;
+        let path = normalize_managed_path(&path, "Index file path")?;
 
         if !path.exists() {
             return Ok(Self::new(path));
         }
 
-        let mut file = File::open(&path)?;
+        let file_len = std::fs::metadata(&path)?.len();
+        if file_len > MAX_INDEX_FILE_BYTES {
+            return Err(invalid_index_error(
+                "Index file exceeds maximum supported size",
+            ));
+        }
+
+        let mut file = open_existing_no_follow(&path)?;
 
         let mut magic = [0u8; 8];
-        file.read_exact(&mut magic)?;
+        read_index_exact(&mut file, &mut magic)?;
         if magic != INDEX_MAGIC {
             return Err(invalid_index_error("Invalid index magic header"));
         }
 
         let mut version = [0u8; 1];
-        file.read_exact(&mut version)?;
+        read_index_exact(&mut file, &mut version)?;
         if version[0] != INDEX_VERSION {
             return Err(invalid_index_error("Unsupported index version"));
         }
 
         let count = read_u64(&mut file)?;
-        let mut map = HashMap::with_capacity(count as usize);
+        if count > MAX_INDEX_ENTRIES {
+            return Err(invalid_index_error(
+                "Index entry count exceeds maximum supported size",
+            ));
+        }
+        if count.saturating_mul(13) > file_len {
+            return Err(invalid_index_error(
+                "Index entry count exceeds file size bounds",
+            ));
+        }
+
+        let mut map = HashMap::new();
+        map.try_reserve(count as usize)
+            .map_err(|_| invalid_index_error("Index entry count exceeds available memory"))?;
 
         for _ in 0..count {
             let id_len = read_u32(&mut file)? as usize;
             if id_len == 0 {
                 return Err(invalid_index_error("Index entry has empty ID"));
             }
+            if id_len > MAX_INDEX_ID_BYTES {
+                return Err(invalid_index_error(
+                    "Index entry ID exceeds maximum supported size",
+                ));
+            }
             let mut id_bytes = vec![0u8; id_len];
-            file.read_exact(&mut id_bytes)?;
+            read_index_exact(&mut file, &mut id_bytes)?;
             let id = String::from_utf8(id_bytes)
                 .map_err(|_| invalid_index_error("Index entry has invalid UTF-8 ID"))?;
             let offset = read_u64(&mut file)?;
@@ -141,11 +333,17 @@ impl Index {
     ///
     /// Returns an error if the file cannot be written or renamed.
     pub fn save(&self) -> Result<()> {
-        use std::fs::File;
         use std::io::Write;
 
-        let temp_path = self.path.with_extension("bin.tmp");
-        let mut file = File::create(&temp_path)?;
+        Self::validate_path(&self.path)?;
+        let path = normalize_managed_path(&self.path, "Index file path")?;
+
+        let temp_path = unique_temp_path(&path, "bin");
+        reject_managed_path_symlinks(&temp_path, "Index temp file path")?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)?;
 
         file.write_all(&INDEX_MAGIC)?;
         file.write_all(&[INDEX_VERSION])?;
@@ -161,7 +359,8 @@ impl Index {
         }
 
         file.sync_all()?;
-        std::fs::rename(&temp_path, &self.path)?;
+        Self::validate_path(&path)?;
+        std::fs::rename(&temp_path, &path)?;
 
         Ok(())
     }
@@ -212,8 +411,7 @@ impl Index {
     ///
     /// Returns an error if the JSONL file cannot be read or contains invalid JSON.
     pub fn rebuild(&mut self, jsonl_path: &Path) -> Result<()> {
-        use std::fs::File;
-        use std::io::{BufRead, BufReader};
+        use std::io::BufReader;
 
         self.map.clear();
 
@@ -221,17 +419,32 @@ impl Index {
             return Ok(());
         }
 
-        let file = File::open(jsonl_path)?;
+        Storage::reject_symlink_path(jsonl_path)?;
+
+        let file = open_existing_no_follow(jsonl_path)?;
         let mut reader = BufReader::new(file);
         let mut offset: u64 = 0;
+        let mut line = Vec::new();
+        let mut line_idx = 0usize;
 
         loop {
-            let mut line = String::new();
-            let bytes = reader.read_line(&mut line)?;
+            let bytes = read_bounded_jsonl_line(&mut reader, jsonl_path, line_idx + 1, &mut line)?;
             if bytes == 0 {
                 break;
             }
+            line_idx += 1;
 
+            let line = std::str::from_utf8(&line).map_err(|err| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Invalid UTF-8 in {} at line {}: {}",
+                        jsonl_path.display(),
+                        line_idx,
+                        err
+                    ),
+                ))
+            })?;
             let line_trimmed = line.trim_end_matches(['\n', '\r']);
             if line_trimmed.is_empty() {
                 offset = offset.saturating_add(bytes as u64);
@@ -294,6 +507,7 @@ impl Storage {
     /// Returns an error if the path is invalid.
     pub fn new(path: PathBuf) -> Result<Self> {
         Self::validate_path(&path)?;
+        let path = normalize_managed_path(&path, "Storage file path")?;
         Ok(Self { path, index: None })
     }
 
@@ -313,6 +527,7 @@ impl Storage {
     /// Returns an error if the path is invalid.
     pub fn with_index(path: PathBuf, index_path: Option<PathBuf>) -> Result<Self> {
         Self::validate_path(&path)?;
+        let path = normalize_managed_path(&path, "Storage file path")?;
         let mut index = None;
 
         if let Some(index_path) = index_path {
@@ -366,7 +581,16 @@ impl Storage {
                 "Path cannot be empty",
             )));
         }
+        Self::reject_symlink_path(path)?;
         Ok(())
+    }
+
+    fn reject_symlink_path(path: &Path) -> Result<()> {
+        reject_managed_path_symlinks(path, "Storage file path")
+    }
+
+    fn ensure_not_symlink(&self) -> Result<()> {
+        Self::reject_symlink_path(&self.path)
     }
 
     /// Returns a reference to the JSONL file path.
@@ -419,32 +643,133 @@ impl Storage {
     /// - The file contains invalid JSON
     /// - A Pearl fails validation
     pub fn load_all(&self) -> Result<Vec<Pearl>> {
-        use std::fs::File;
         use std::io::BufReader;
+
+        self.ensure_not_symlink()?;
 
         // Handle empty file case
         if !self.path.exists() {
             return Ok(Vec::new());
         }
 
-        let file = File::open(&self.path)?;
-        let reader = BufReader::with_capacity(64 * 1024, file);
+        let file = open_existing_no_follow(&self.path)?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
         let mut pearls = Vec::new();
+        let mut line = Vec::new();
+        let mut line_idx = 0usize;
 
-        // Use streaming deserializer for memory efficiency
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Pearl>();
+        loop {
+            let bytes = read_bounded_jsonl_line(&mut reader, &self.path, line_idx + 1, &mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            line_idx += 1;
 
-        for result in stream {
-            match result {
+            let line = match std::str::from_utf8(&line) {
+                Ok(line) => line,
+                Err(err) => {
+                    eprintln!(
+                        "Warning: Skipping invalid UTF-8 in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        err
+                    );
+                    continue;
+                }
+            };
+            let line_trimmed = line.trim_end_matches(['\n', '\r']);
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            match serde_json::from_str::<Pearl>(line_trimmed) {
                 Ok(pearl) => {
                     pearl.validate()?;
                     pearls.push(pearl);
                 }
                 Err(e) => {
                     // Log malformed JSON but continue processing
-                    eprintln!("Warning: Skipping malformed JSON line: {}", e);
+                    eprintln!(
+                        "Warning: Skipping malformed JSON in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        e
+                    );
                 }
             }
+        }
+
+        Ok(pearls)
+    }
+
+    /// Loads all Pearls from the JSONL file and fails on malformed lines.
+    ///
+    /// Use this in write paths that depend on a complete ID reservation set.
+    /// The permissive [`Storage::load_all`] method is retained for existing
+    /// read/list behavior that tolerates partially malformed repositories.
+    pub fn load_all_strict(&self) -> Result<Vec<Pearl>> {
+        use std::io::BufReader;
+
+        self.ensure_not_symlink()?;
+
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = open_existing_no_follow(&self.path)?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let mut pearls = Vec::new();
+        let mut seen_ids = HashSet::new();
+        let mut line = Vec::new();
+        let mut line_idx = 0usize;
+
+        loop {
+            let bytes = read_bounded_jsonl_line(&mut reader, &self.path, line_idx + 1, &mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            line_idx += 1;
+
+            let line = std::str::from_utf8(&line).map_err(|err| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Invalid UTF-8 in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        err
+                    ),
+                ))
+            })?;
+            let line_trimmed = line.trim_end_matches(['\n', '\r']);
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            let pearl: Pearl = serde_json::from_str(line_trimmed).map_err(|err| {
+                Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Invalid Pearl JSON in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        err
+                    ),
+                ))
+            })?;
+            pearl.validate()?;
+            if !seen_ids.insert(pearl.id.clone()) {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Duplicate Pearl ID in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        pearl.id
+                    ),
+                )));
+            }
+            pearls.push(pearl);
         }
 
         Ok(pearls)
@@ -467,8 +792,9 @@ impl Storage {
     /// - The Pearl is not found
     /// - The file contains invalid JSON
     pub fn load_by_id(&mut self, id: &str) -> Result<Pearl> {
-        use std::fs::File;
         use std::io::BufReader;
+
+        self.ensure_not_symlink()?;
 
         // Check index first if available
         if let Some(index) = self.index.as_mut() {
@@ -493,12 +819,36 @@ impl Storage {
             return Err(Error::NotFound(id.to_string()));
         }
 
-        let file = File::open(&self.path)?;
-        let reader = BufReader::with_capacity(64 * 1024, file);
-        let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Pearl>();
+        let file = open_existing_no_follow(&self.path)?;
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let mut line = Vec::new();
+        let mut line_idx = 0usize;
 
-        for result in stream {
-            match result {
+        loop {
+            let bytes = read_bounded_jsonl_line(&mut reader, &self.path, line_idx + 1, &mut line)?;
+            if bytes == 0 {
+                break;
+            }
+            line_idx += 1;
+
+            let line = match std::str::from_utf8(&line) {
+                Ok(line) => line,
+                Err(err) => {
+                    eprintln!(
+                        "Warning: Skipping invalid UTF-8 in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        err
+                    );
+                    continue;
+                }
+            };
+            let line_trimmed = line.trim_end_matches(['\n', '\r']);
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            match serde_json::from_str::<Pearl>(line_trimmed) {
                 Ok(pearl) => {
                     if pearl.id == id {
                         pearl.validate()?;
@@ -506,8 +856,12 @@ impl Storage {
                     }
                 }
                 Err(e) => {
-                    // Skip malformed JSON lines
-                    eprintln!("Warning: Skipping malformed JSON line: {}", e);
+                    eprintln!(
+                        "Warning: Skipping malformed JSON in {} at line {}: {}",
+                        self.path.display(),
+                        line_idx,
+                        e
+                    );
                 }
             }
         }
@@ -516,19 +870,31 @@ impl Storage {
     }
 
     fn load_by_offset(path: &Path, id: &str, offset: u64) -> Result<Pearl> {
-        use std::fs::File;
-        use std::io::{BufRead, BufReader, Seek, SeekFrom};
+        use std::io::{BufReader, Seek, SeekFrom};
 
-        let mut file = File::open(path)?;
+        Self::reject_symlink_path(path)?;
+
+        let mut file = open_existing_no_follow(path)?;
         file.seek(SeekFrom::Start(offset))?;
 
         let mut reader = BufReader::new(file);
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
+        let mut line = Vec::new();
+        let bytes = read_bounded_jsonl_line(&mut reader, path, 1, &mut line)?;
         if bytes == 0 {
             return Err(Error::NotFound(id.to_string()));
         }
 
+        let line = std::str::from_utf8(&line).map_err(|err| {
+            Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Invalid UTF-8 in {} at offset {}: {}",
+                    path.display(),
+                    offset,
+                    err
+                ),
+            ))
+        })?;
         let line_trimmed = line.trim_end_matches(['\n', '\r']);
         if line_trimmed.is_empty() {
             return Err(Error::NotFound(id.to_string()));
@@ -579,26 +945,46 @@ impl Storage {
         archive_path: Option<&Path>,
         max_attempts: u32,
     ) -> Result<()> {
-        if ReentrantLockGuard::is_held(&self.path.with_extension("lock")) {
+        self.create_many(std::slice::from_mut(pearl), archive_path, max_attempts)
+    }
+
+    /// Creates multiple Pearls with unused IDs in one locked write transaction.
+    ///
+    /// Unlike [`Storage::save_all`], this is create-only: it never updates
+    /// existing Pearls. Candidate IDs are checked while the storage lock is
+    /// held, including archived IDs when an archive path is provided.
+    pub fn create_many(
+        &mut self,
+        pearls: &mut [Pearl],
+        archive_path: Option<&Path>,
+        max_attempts: u32,
+    ) -> Result<()> {
+        if ReentrantLockGuard::is_held(&normalize_lock_path(self.path.with_extension("lock"))) {
             return Err(Error::InvalidPearl(
-                "create_new cannot be called while the storage file lock is already held"
+                "create_many cannot be called while the storage file lock is already held"
                     .to_string(),
             ));
         }
 
-        let mut pearl_to_save = pearl.clone();
+        let mut pearls_to_save = pearls.to_vec();
         let archive_path = archive_path.map(Path::to_path_buf);
 
         let repository_lock_path = self.repository_lock_path();
         let saved = Self::with_exclusive_lock_path(repository_lock_path, move || {
             self.with_lock(move |storage| {
                 storage
-                    .create_new_unlocked(&mut pearl_to_save, archive_path.as_deref(), max_attempts)
-                    .map(|()| pearl_to_save)
+                    .create_many_unlocked(
+                        &mut pearls_to_save,
+                        archive_path.as_deref(),
+                        max_attempts,
+                    )
+                    .map(|()| pearls_to_save)
             })
         })?;
 
-        pearl.id = saved.id;
+        for (target, saved) in pearls.iter_mut().zip(saved) {
+            target.id = saved.id;
+        }
         Ok(())
     }
 
@@ -685,18 +1071,24 @@ impl Storage {
         use fs2::FileExt;
         use std::time::{Duration, Instant};
 
+        let lock_path = normalize_lock_path(lock_path);
+        reject_managed_path_symlinks(&lock_path, "Lock file path").map_err(E::from)?;
+
+        if Self::is_repository_lock_path(&lock_path)
+            && ReentrantLockGuard::is_any_other_held(&lock_path)
+        {
+            return Err(E::from(Error::InvalidPearl(
+                "repository lock cannot be acquired while another storage lock is already held"
+                    .to_string(),
+            )));
+        }
+
         let reentrant_guard = ReentrantLockGuard::acquire(lock_path.clone());
         if reentrant_guard.was_held() {
             return f();
         }
 
-        let lock_file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|err| E::from(Error::Io(err)))?;
+        let lock_file = open_lock_no_follow(&lock_path).map_err(E::from)?;
 
         // Try to acquire exclusive lock with timeout.
         // fs2 does not support timeouts directly, so we retry with backoff.
@@ -724,6 +1116,11 @@ impl Storage {
         let _ = lock_file.unlock();
 
         result
+    }
+
+    fn is_repository_lock_path(path: &Path) -> bool {
+        path.file_name()
+            .is_some_and(|name| name == "repository.lock")
     }
 }
 
@@ -753,6 +1150,10 @@ impl ReentrantLockGuard {
 
     fn is_held(path: &Path) -> bool {
         REENTRANT_LOCK_DEPTHS.with(|locks| locks.borrow().contains_key(path))
+    }
+
+    fn is_any_other_held(path: &Path) -> bool {
+        REENTRANT_LOCK_DEPTHS.with(|locks| locks.borrow().keys().any(|held| held != path))
     }
 }
 
@@ -793,7 +1194,7 @@ impl Storage {
         let target_id = id.to_string();
         self.with_lock(move |storage| {
             // Load all Pearls
-            let mut pearls = storage.load_all()?;
+            let mut pearls = storage.load_all_strict()?;
 
             // Find and remove the Pearl
             let initial_len = pearls.len();
@@ -834,9 +1235,9 @@ impl Storage {
 }
 
 impl Storage {
-    fn create_new_unlocked(
+    fn create_many_unlocked(
         &mut self,
-        pearl: &mut Pearl,
+        new_pearls: &mut [Pearl],
         archive_path: Option<&Path>,
         max_attempts: u32,
     ) -> Result<()> {
@@ -846,40 +1247,54 @@ impl Storage {
             ));
         }
 
-        let mut pearls = self.load_all()?;
+        let mut pearls = self.load_all_strict()?;
         let mut reserved_ids: HashSet<String> = pearls.iter().map(|p| p.id.clone()).collect();
 
         if let Some(archive_path) = archive_path.filter(|path| path.exists()) {
             let archive_storage = Storage::new(archive_path.to_path_buf())?;
-            for archived in archive_storage.load_all()? {
+            for archived in archive_storage.load_all_strict()? {
                 reserved_ids.insert(archived.id);
             }
         }
 
-        for nonce in 0..max_attempts {
-            let candidate =
-                crate::identity::generate_id(&pearl.title, &pearl.author, pearl.created_at, nonce);
+        for pearl in new_pearls {
+            let mut selected = None;
+            for nonce in 0..max_attempts {
+                let candidate = crate::identity::generate_id(
+                    &pearl.title,
+                    &pearl.author,
+                    pearl.created_at,
+                    nonce,
+                );
 
-            if reserved_ids.contains(&candidate) {
-                continue;
+                if reserved_ids.contains(&candidate) {
+                    continue;
+                }
+
+                selected = Some(candidate);
+                break;
             }
 
-            pearl.id = candidate;
+            let Some(candidate) = selected else {
+                return Err(Error::InvalidPearl(format!(
+                    "Unable to allocate unique Pearl ID after {max_attempts} attempts: candidate space exhausted"
+                )));
+            };
+
+            pearl.id = candidate.clone();
             pearl.validate()?;
+            reserved_ids.insert(candidate);
             pearls.push(pearl.clone());
-            return self.save_all_unlocked(&pearls);
         }
 
-        Err(Error::InvalidPearl(format!(
-            "Unable to allocate unique Pearl ID after {max_attempts} attempts: candidate space exhausted"
-        )))
+        self.save_all_unlocked(&pearls)
     }
 
     fn save_unlocked(&mut self, pearl: &Pearl) -> Result<()> {
         pearl.validate()?;
 
         // Load all existing Pearls while lock is held.
-        let mut pearls = self.load_all().unwrap_or_default();
+        let mut pearls = self.load_all_strict()?;
 
         // Find and update or append.
         if let Some(pos) = pearls.iter().position(|p| p.id == pearl.id) {
@@ -893,6 +1308,8 @@ impl Storage {
 
     fn save_all_unlocked(&mut self, pearls: &[Pearl]) -> Result<()> {
         use std::io::Write;
+
+        self.ensure_not_symlink()?;
 
         // Validate all Pearls first.
         for pearl in pearls {
@@ -950,11 +1367,6 @@ impl Storage {
     }
 
     fn unique_temp_path(&self) -> PathBuf {
-        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0_u128, |duration| duration.as_nanos());
-        let temp_extension = format!("jsonl.tmp.{}.{}.{}", std::process::id(), nanos, counter);
-        self.path.with_extension(temp_extension)
+        unique_temp_path(&self.path, "jsonl")
     }
 }

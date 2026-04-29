@@ -741,6 +741,121 @@ fn test_compact_archives_closed_pearls() {
 }
 
 #[test]
+fn test_compact_rejects_different_archived_pearl_with_same_id() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut active = pearls_core::Pearl::new("Active duplicate".to_string(), "alice".to_string());
+    active.status = pearls_core::Status::Closed;
+    active.updated_at = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp();
+
+    let mut archived = active.clone();
+    archived.title = "Different archived duplicate".to_string();
+
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&active).expect("Failed to save active pearl");
+
+    let mut archive_storage =
+        Storage::new(pearls_dir.join("archive.jsonl")).expect("Failed to create archive storage");
+    archive_storage
+        .save(&archived)
+        .expect("Failed to save archived pearl");
+
+    let err = pearls_cli::commands::compact::execute(Some(7), false)
+        .expect_err("Compact should reject divergent duplicate archived IDs");
+    assert!(
+        err.to_string().contains("same ID"),
+        "unexpected error: {err}"
+    );
+
+    let active_after = storage.load_all().expect("Failed to reload active pearls");
+    assert_eq!(active_after.len(), 1, "active Pearl must not be dropped");
+    assert_eq!(active_after[0].title, active.title);
+}
+
+#[test]
+fn test_compact_allows_identical_archived_pearl_with_same_id() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut active = pearls_core::Pearl::new("Already Archived".to_string(), "alice".to_string());
+    active.status = pearls_core::Status::Closed;
+    active.updated_at = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp();
+
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&active).expect("Failed to save active pearl");
+
+    let mut archive_storage =
+        Storage::new(pearls_dir.join("archive.jsonl")).expect("Failed to create archive storage");
+    archive_storage
+        .save(&active)
+        .expect("Failed to save archived pearl");
+
+    pearls_cli::commands::compact::execute(Some(7), false)
+        .expect("Compact should allow identical archived duplicate");
+
+    let active_after = storage.load_all().expect("Failed to reload active pearls");
+    assert!(active_after.is_empty(), "active Pearl should be archived");
+    let archived_after = archive_storage
+        .load_all()
+        .expect("Failed to reload archived pearls");
+    assert_eq!(archived_after.len(), 1);
+    assert_eq!(archived_after[0], active);
+}
+
+#[test]
+fn test_compact_fails_closed_on_malformed_active_jsonl() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+    let malformed = "{not valid json}\n";
+    fs::write(pearls_dir.join("issues.jsonl"), malformed).expect("Failed to write issues");
+
+    let err = pearls_cli::commands::compact::execute(Some(7), false)
+        .expect_err("Compact should fail closed on malformed active JSONL");
+    assert!(err.to_string().contains("Invalid Pearl JSON"));
+
+    let active_after = fs::read_to_string(pearls_dir.join("issues.jsonl"))
+        .expect("Failed to read active after compact");
+    assert_eq!(active_after, malformed);
+}
+
+#[test]
+fn test_compact_fails_closed_on_malformed_archive_jsonl() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let mut active = pearls_core::Pearl::new("Old Closed".to_string(), "alice".to_string());
+    active.status = pearls_core::Status::Closed;
+    active.updated_at = (chrono::Utc::now() - chrono::Duration::days(30)).timestamp();
+
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage.save(&active).expect("Failed to save active pearl");
+    let before_active = fs::read_to_string(pearls_dir.join("issues.jsonl"))
+        .expect("Failed to read active before compact");
+
+    let malformed = "{not valid json}\n";
+    fs::write(pearls_dir.join("archive.jsonl"), malformed).expect("Failed to write archive");
+
+    let err = pearls_cli::commands::compact::execute(Some(7), false)
+        .expect_err("Compact should fail closed on malformed archive JSONL");
+    assert!(err.to_string().contains("Invalid Pearl JSON"));
+
+    let active_after = fs::read_to_string(pearls_dir.join("issues.jsonl"))
+        .expect("Failed to read active after compact");
+    let archive_after = fs::read_to_string(pearls_dir.join("archive.jsonl"))
+        .expect("Failed to read archive after compact");
+    assert_eq!(active_after, before_active);
+    assert_eq!(archive_after, malformed);
+}
+
+#[test]
 fn test_compact_dry_run_keeps_files() {
     let temp_dir = TempDir::new().expect("Failed to create temp directory");
     let _guard = enter_dir(temp_dir.path());

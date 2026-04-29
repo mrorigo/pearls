@@ -10,6 +10,8 @@ use anyhow::Result;
 use pearls_core::{Config, Pearl, Storage};
 use std::path::Path;
 
+const MAX_CREATE_ID_ATTEMPTS: u32 = 65_536;
+
 /// Creates a new Pearl with the specified parameters.
 ///
 /// # Arguments
@@ -91,7 +93,7 @@ pub fn execute(
     storage.create_new(
         &mut pearl,
         Some(&pearls_dir.join("archive.jsonl")),
-        1_000_000,
+        MAX_CREATE_ID_ATTEMPTS,
     )?;
 
     if is_json_output() {

@@ -32,6 +32,9 @@ use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt;
 
+const MAX_CREATE_ID_ATTEMPTS: u32 = 65_536;
+const MAX_MCP_CREATE_BATCH_SIZE: usize = 100;
+
 /// Runtime options for the MCP server.
 #[derive(Debug, Clone)]
 pub struct McpOptions {
@@ -202,15 +205,13 @@ impl PearlsMcp {
         let mut pearls = storage.load_all()?;
         if include_archived {
             if let Some(archive_storage) = repo.open_archive_storage()? {
-                if let Ok(archived) = archive_storage.load_all() {
-                    let mut archived = archived;
-                    for pearl in &mut archived {
-                        pearl
-                            .metadata
-                            .insert("archived".to_string(), serde_json::Value::Bool(true));
-                    }
-                    pearls.extend(archived);
+                let mut archived = archive_storage.load_all()?;
+                for pearl in &mut archived {
+                    pearl
+                        .metadata
+                        .insert("archived".to_string(), serde_json::Value::Bool(true));
                 }
+                pearls.extend(archived);
             }
         }
         Ok(pearls)
@@ -227,6 +228,12 @@ impl PearlsMcp {
             return Err(AppError::InvalidInput(
                 "Create request must include at least one item".to_string(),
             ));
+        }
+
+        if input.items.len() > MAX_MCP_CREATE_BATCH_SIZE {
+            return Err(AppError::InvalidInput(format!(
+                "Create request cannot include more than {MAX_MCP_CREATE_BATCH_SIZE} items"
+            )));
         }
 
         let repo = self.repo_context()?;
@@ -270,9 +277,11 @@ impl PearlsMcp {
         }
 
         let mut storage = repo.open_storage()?;
-        for pearl in &created {
-            storage.save(pearl)?;
-        }
+        storage.create_many(
+            &mut created,
+            Some(repo.archive_path()),
+            MAX_CREATE_ID_ATTEMPTS,
+        )?;
 
         Ok(CreateResult { pearls: created })
     }
@@ -1337,6 +1346,90 @@ mod tests {
                 .contains("Priority must be 0-1, got 2"),
             "Unexpected update error: {update_error}"
         );
+    }
+
+    #[test]
+    fn test_mcp_create_allocates_unique_ids_for_duplicate_inputs() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+
+        let created = server
+            .create_tool(CreateInput {
+                items: vec![
+                    CreateItem {
+                        title: "Duplicate MCP".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: Some("same-author".to_string()),
+                    },
+                    CreateItem {
+                        title: "Duplicate MCP".to_string(),
+                        description: None,
+                        priority: None,
+                        labels: None,
+                        author: Some("same-author".to_string()),
+                    },
+                ],
+            })
+            .expect("create failed");
+
+        assert_eq!(created.pearls.len(), 2);
+        assert_ne!(created.pearls[0].id, created.pearls[1].id);
+
+        let repo = server.repo_context().expect("repo context");
+        let storage = repo.open_storage().expect("storage");
+        let persisted = storage.load_all_strict().expect("load persisted pearls");
+        assert_eq!(persisted.len(), 2, "both MCP-created Pearls persist");
+    }
+
+    #[test]
+    fn test_mcp_create_reserves_archived_ids() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+        let repo = server.repo_context().expect("repo context");
+
+        let archived =
+            pearls_core::Pearl::new("Archived MCP".to_string(), "same-author".to_string());
+        let archived_id = archived.id.clone();
+        let mut archive_storage =
+            pearls_core::Storage::new(repo.archive_path().to_path_buf()).expect("archive storage");
+        archive_storage.save(&archived).expect("save archived");
+
+        let created = server
+            .create_tool(CreateInput {
+                items: vec![CreateItem {
+                    title: "Archived MCP".to_string(),
+                    description: None,
+                    priority: None,
+                    labels: None,
+                    author: Some("same-author".to_string()),
+                }],
+            })
+            .expect("create failed");
+
+        assert_ne!(created.pearls[0].id, archived_id);
+    }
+
+    #[test]
+    fn test_mcp_create_rejects_oversized_batch() {
+        let temp = init_repo();
+        let server = server_for(&temp);
+        let items = (0..=MAX_MCP_CREATE_BATCH_SIZE)
+            .map(|idx| CreateItem {
+                title: format!("Too many {idx}"),
+                description: None,
+                priority: None,
+                labels: None,
+                author: None,
+            })
+            .collect();
+
+        let err = server
+            .create_tool(CreateInput { items })
+            .expect_err("oversized MCP create batch should fail");
+
+        assert!(err.to_string().contains("more than"));
     }
 
     #[test]
