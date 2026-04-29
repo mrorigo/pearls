@@ -579,13 +579,23 @@ impl Storage {
         archive_path: Option<&Path>,
         max_attempts: u32,
     ) -> Result<()> {
+        if ReentrantLockGuard::is_held(&self.path.with_extension("lock")) {
+            return Err(Error::InvalidPearl(
+                "create_new cannot be called while the storage file lock is already held"
+                    .to_string(),
+            ));
+        }
+
         let mut pearl_to_save = pearl.clone();
         let archive_path = archive_path.map(Path::to_path_buf);
 
-        let saved = self.with_lock(move |storage| {
-            storage
-                .create_new_unlocked(&mut pearl_to_save, archive_path.as_deref(), max_attempts)
-                .map(|()| pearl_to_save)
+        let repository_lock_path = self.repository_lock_path();
+        let saved = Self::with_exclusive_lock_path(repository_lock_path, move || {
+            self.with_lock(move |storage| {
+                storage
+                    .create_new_unlocked(&mut pearl_to_save, archive_path.as_deref(), max_attempts)
+                    .map(|()| pearl_to_save)
+            })
         })?;
 
         pearl.id = saved.id;
@@ -643,14 +653,41 @@ impl Storage {
         F: FnOnce(&mut Storage) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        let lock_path = self.path.with_extension("lock");
+        Self::with_exclusive_lock_path(lock_path, move || f(self))
+    }
+
+    /// Executes a closure while holding the repository-level Pearls lock.
+    ///
+    /// Use this for operations that must coordinate multiple Pearls files, such
+    /// as active issues plus archives. Single-file operations should use
+    /// [`Storage::with_lock`].
+    pub fn with_repository_lock<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce() -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        Self::with_exclusive_lock_path(self.repository_lock_path(), f)
+    }
+
+    fn repository_lock_path(&self) -> PathBuf {
+        self.path.parent().map_or_else(
+            || self.path.with_extension("repository.lock"),
+            |parent| parent.join("repository.lock"),
+        )
+    }
+
+    fn with_exclusive_lock_path<F, T, E>(lock_path: PathBuf, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce() -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         use fs2::FileExt;
         use std::time::{Duration, Instant};
 
-        // Create or open the lock file
-        let lock_path = self.path.with_extension("lock");
         let reentrant_guard = ReentrantLockGuard::acquire(lock_path.clone());
         if reentrant_guard.was_held() {
-            return f(self);
+            return f();
         }
 
         let lock_file = OpenOptions::new()
@@ -681,7 +718,7 @@ impl Storage {
         }
 
         // Execute the closure
-        let result = f(self);
+        let result = f();
 
         // Ensure lock is released (even if closure fails)
         let _ = lock_file.unlock();
@@ -712,6 +749,10 @@ impl ReentrantLockGuard {
 
     fn was_held(&self) -> bool {
         self.was_held
+    }
+
+    fn is_held(path: &Path) -> bool {
+        REENTRANT_LOCK_DEPTHS.with(|locks| locks.borrow().contains_key(path))
     }
 }
 

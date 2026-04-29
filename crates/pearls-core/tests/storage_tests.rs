@@ -6,6 +6,9 @@
 
 use pearls_core::{identity::generate_id, Error, Pearl, Status, Storage};
 use std::fs;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Helper to create a test Pearl.
@@ -128,6 +131,120 @@ fn test_create_new_fails_explicitly_when_candidates_exhausted() {
         pearls.len(),
         1,
         "failed create must not overwrite existing pearl"
+    );
+}
+
+#[test]
+fn test_create_new_waits_for_repository_lock() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+    let lock_storage = Storage::new(storage_path.clone()).expect("Failed to create lock storage");
+    let (locked_tx, locked_rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+        lock_storage
+            .with_repository_lock(|| {
+                locked_tx
+                    .send(())
+                    .expect("Failed to signal lock acquisition");
+                thread::sleep(Duration::from_millis(250));
+                Ok::<(), Error>(())
+            })
+            .expect("Failed to hold repository lock");
+    });
+
+    locked_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("Timed out waiting for repository lock acquisition");
+
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut pearl = create_collision_pearl("Repository lock", "author", 1704067200);
+    let started = Instant::now();
+    storage
+        .create_new(&mut pearl, Some(&archive_path), 2)
+        .expect("Failed to create pearl");
+
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "create_new should wait for repository-level multi-file operations"
+    );
+    handle.join().expect("Repository lock thread panicked");
+}
+
+#[test]
+fn test_create_new_reserves_id_archived_while_waiting_for_repository_lock() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+    let lock_storage = Storage::new(storage_path.clone()).expect("Failed to create lock storage");
+    let archive_path_for_thread = archive_path.clone();
+    let (locked_tx, locked_rx) = mpsc::channel();
+    let (archive_tx, archive_rx) = mpsc::channel();
+
+    let handle = thread::spawn(move || {
+        lock_storage
+            .with_repository_lock(|| {
+                locked_tx
+                    .send(())
+                    .expect("Failed to signal lock acquisition");
+                archive_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("Timed out waiting for archive signal");
+                let archived = create_collision_pearl("Race title", "author", 1704067200);
+                let mut archive_storage = Storage::new(archive_path_for_thread)
+                    .expect("Failed to create archive storage");
+                archive_storage
+                    .save(&archived)
+                    .expect("Failed to archive collision pearl");
+                Ok::<(), Error>(())
+            })
+            .expect("Failed to hold repository lock");
+    });
+
+    locked_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("Timed out waiting for repository lock acquisition");
+
+    let create_thread = thread::spawn({
+        let storage_path = storage_path.clone();
+        let archive_path = archive_path.clone();
+        move || {
+            let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+            let mut active = create_collision_pearl("Race title", "author", 1704067200);
+            storage
+                .create_new(&mut active, Some(&archive_path), 2)
+                .expect("Failed to create active pearl");
+            active.id
+        }
+    });
+
+    thread::sleep(Duration::from_millis(100));
+    archive_tx.send(()).expect("Failed to signal archive write");
+    let active_id = create_thread.join().expect("Create thread panicked");
+    handle.join().expect("Repository lock thread panicked");
+
+    assert_eq!(
+        active_id,
+        generate_id("Race title", "author", 1704067200, 1)
+    );
+}
+
+#[test]
+fn test_create_new_rejects_call_inside_storage_file_lock() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut pearl = create_collision_pearl("Nested lock", "author", 1704067200);
+
+    let err = storage
+        .with_lock(|storage| storage.create_new(&mut pearl, Some(&archive_path), 2))
+        .expect_err("create_new inside with_lock should fail to avoid lock-order inversion");
+
+    assert!(
+        matches!(err, Error::InvalidPearl(ref message) if message.contains("storage file lock is already held")),
+        "unexpected error: {err}"
     );
 }
 

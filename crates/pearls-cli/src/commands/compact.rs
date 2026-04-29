@@ -41,7 +41,21 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
     let cutoff = Utc::now() - Duration::days(i64::from(threshold_days));
     let cutoff_ts = cutoff.timestamp();
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
+    let issues_path = pearls_dir.join("issues.jsonl");
+    let lock_storage = Storage::new(issues_path.clone())?;
+    lock_storage.with_repository_lock(|| {
+        let mut storage = Storage::new(issues_path)?;
+        compact_with_storage(&mut storage, pearls_dir, threshold_days, cutoff_ts, dry_run)
+    })
+}
+
+fn compact_with_storage(
+    storage: &mut Storage,
+    pearls_dir: &Path,
+    threshold_days: u32,
+    cutoff_ts: i64,
+    dry_run: bool,
+) -> Result<()> {
     let pearls = storage.load_all()?;
 
     let (archive_candidates, remaining): (Vec<Pearl>, Vec<Pearl>) = pearls
