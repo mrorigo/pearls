@@ -4,7 +4,7 @@
 //!
 //! These tests validate specific examples, edge cases, and error conditions.
 
-use pearls_core::{Pearl, Status, Storage};
+use pearls_core::{identity::generate_id, Error, Pearl, Status, Storage};
 use std::fs;
 use tempfile::TempDir;
 
@@ -24,6 +24,111 @@ fn create_test_pearl(id: &str, title: &str) -> Pearl {
         metadata: Default::default(),
         comments: Vec::new(),
     }
+}
+
+fn create_collision_pearl(title: &str, author: &str, timestamp: i64) -> Pearl {
+    Pearl {
+        id: generate_id(title, author, timestamp, 0),
+        title: title.to_string(),
+        description: String::new(),
+        status: Status::Open,
+        priority: 2,
+        created_at: timestamp,
+        updated_at: timestamp,
+        author: author.to_string(),
+        labels: vec![],
+        deps: vec![],
+        metadata: Default::default(),
+        comments: Vec::new(),
+    }
+}
+
+#[test]
+fn test_create_new_retries_active_id_collision() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+
+    let mut first = create_collision_pearl("Duplicate title", "author", 1704067200);
+    let mut second = create_collision_pearl("Duplicate title", "author", 1704067200);
+    let first_nonce_zero_id = first.id.clone();
+    assert_eq!(first.id, second.id, "fixture should start with a collision");
+
+    storage
+        .create_new(&mut first, Some(&archive_path), 2)
+        .expect("Failed to create first pearl");
+    storage
+        .create_new(&mut second, Some(&archive_path), 2)
+        .expect("Failed to create second pearl");
+
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), 2, "create should append both pearls");
+    assert_eq!(first.id, first_nonce_zero_id);
+    assert_ne!(first.id, second.id, "second create should retry nonce");
+    assert_eq!(
+        second.id,
+        generate_id("Duplicate title", "author", 1704067200, 1)
+    );
+}
+
+#[test]
+fn test_create_new_reserves_archived_ids() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+
+    let archived = create_collision_pearl("Archived title", "author", 1704067200);
+    let archived_id = archived.id.clone();
+    let mut archive_storage = Storage::new(archive_path.clone()).expect("Failed to create archive");
+    archive_storage
+        .save(&archived)
+        .expect("Failed to save archived pearl");
+
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+    let mut active = create_collision_pearl("Archived title", "author", 1704067200);
+    storage
+        .create_new(&mut active, Some(&archive_path), 2)
+        .expect("Failed to create active pearl");
+
+    assert_ne!(
+        active.id, archived_id,
+        "create should not reuse archived IDs"
+    );
+    assert_eq!(
+        active.id,
+        generate_id("Archived title", "author", 1704067200, 1)
+    );
+}
+
+#[test]
+fn test_create_new_fails_explicitly_when_candidates_exhausted() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let storage_path = temp_dir.path().join("issues.jsonl");
+    let archive_path = temp_dir.path().join("archive.jsonl");
+    let mut storage = Storage::new(storage_path).expect("Failed to create storage");
+
+    let mut first = create_collision_pearl("Exhaust title", "author", 1704067200);
+    let mut second = create_collision_pearl("Exhaust title", "author", 1704067200);
+    storage
+        .create_new(&mut first, Some(&archive_path), 1)
+        .expect("Failed to create first pearl");
+
+    let err = storage
+        .create_new(&mut second, Some(&archive_path), 1)
+        .expect_err("Exhausted candidate generation should fail");
+
+    assert!(
+        matches!(err, Error::InvalidPearl(ref message) if message.contains("candidate space exhausted")),
+        "unexpected error: {err}"
+    );
+
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    assert_eq!(
+        pearls.len(),
+        1,
+        "failed create must not overwrite existing pearl"
+    );
 }
 
 #[test]

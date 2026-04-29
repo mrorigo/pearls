@@ -164,4 +164,3 @@ fn enforce_description_limit(description: &str) -> Result<()> {
     }
     Ok(())
 }
-

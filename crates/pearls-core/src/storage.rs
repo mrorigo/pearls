@@ -7,7 +7,7 @@
 
 use crate::{Error, Pearl, Result};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -568,6 +568,30 @@ impl Storage {
         self.with_lock(move |storage| storage.save_unlocked(&pearl_to_save))
     }
 
+    /// Creates a new Pearl with an unused ID.
+    ///
+    /// Unlike [`Storage::save`], this is create-only: it never updates an
+    /// existing Pearl. Candidate IDs are checked while the storage lock is held,
+    /// including archived IDs when an archive path is provided.
+    pub fn create_new(
+        &mut self,
+        pearl: &mut Pearl,
+        archive_path: Option<&Path>,
+        max_attempts: u32,
+    ) -> Result<()> {
+        let mut pearl_to_save = pearl.clone();
+        let archive_path = archive_path.map(Path::to_path_buf);
+
+        let saved = self.with_lock(move |storage| {
+            storage
+                .create_new_unlocked(&mut pearl_to_save, archive_path.as_deref(), max_attempts)
+                .map(|()| pearl_to_save)
+        })?;
+
+        pearl.id = saved.id;
+        Ok(())
+    }
+
     /// Saves multiple Pearls to the JSONL file.
     ///
     /// Replaces the entire file with the provided Pearls.
@@ -769,6 +793,47 @@ impl Storage {
 }
 
 impl Storage {
+    fn create_new_unlocked(
+        &mut self,
+        pearl: &mut Pearl,
+        archive_path: Option<&Path>,
+        max_attempts: u32,
+    ) -> Result<()> {
+        if max_attempts == 0 {
+            return Err(Error::InvalidPearl(
+                "Unable to allocate unique Pearl ID: candidate space exhausted".to_string(),
+            ));
+        }
+
+        let mut pearls = self.load_all()?;
+        let mut reserved_ids: HashSet<String> = pearls.iter().map(|p| p.id.clone()).collect();
+
+        if let Some(archive_path) = archive_path.filter(|path| path.exists()) {
+            let archive_storage = Storage::new(archive_path.to_path_buf())?;
+            for archived in archive_storage.load_all()? {
+                reserved_ids.insert(archived.id);
+            }
+        }
+
+        for nonce in 0..max_attempts {
+            let candidate =
+                crate::identity::generate_id(&pearl.title, &pearl.author, pearl.created_at, nonce);
+
+            if reserved_ids.contains(&candidate) {
+                continue;
+            }
+
+            pearl.id = candidate;
+            pearl.validate()?;
+            pearls.push(pearl.clone());
+            return self.save_all_unlocked(&pearls);
+        }
+
+        Err(Error::InvalidPearl(format!(
+            "Unable to allocate unique Pearl ID after {max_attempts} attempts: candidate space exhausted"
+        )))
+    }
+
     fn save_unlocked(&mut self, pearl: &Pearl) -> Result<()> {
         pearl.validate()?;
 

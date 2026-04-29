@@ -88,7 +88,11 @@ pub fn execute(
     if !labels.is_empty() {
         super::utils::suggest_labels(&storage, &labels)?;
     }
-    storage.save(&pearl)?;
+    storage.create_new(
+        &mut pearl,
+        Some(&pearls_dir.join("archive.jsonl")),
+        1_000_000,
+    )?;
 
     if is_json_output() {
         println!(
@@ -159,4 +163,3 @@ fn enforce_description_limit(description: &str) -> Result<()> {
     }
     Ok(())
 }
-

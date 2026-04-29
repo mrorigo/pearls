@@ -1281,9 +1281,11 @@ mod tests {
     fn test_priority_respects_configured_max_for_create_and_update() {
         let temp = init_repo();
         let pearls_dir = temp.path().join(".pearls");
-        let mut config = Config::default();
-        config.default_priority = 1;
-        config.max_priority = 1;
+        let config = Config {
+            default_priority: 1,
+            max_priority: 1,
+            ..Default::default()
+        };
         config.save(&pearls_dir).expect("Failed to save config");
 
         let server = server_for(&temp);

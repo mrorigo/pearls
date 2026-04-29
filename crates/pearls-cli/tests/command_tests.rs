@@ -825,9 +825,11 @@ fn test_create_rejects_priority_above_configured_max() {
     let _guard = enter_dir(temp_dir.path());
     let pearls_dir = init_repo(temp_dir.path());
 
-    let mut config = pearls_core::Config::default();
-    config.default_priority = 1;
-    config.max_priority = 1;
+    let config = pearls_core::Config {
+        default_priority: 1,
+        max_priority: 1,
+        ..Default::default()
+    };
     config.save(&pearls_dir).expect("Failed to save config");
 
     let error = pearls_cli::commands::create::execute(
@@ -852,9 +854,11 @@ fn test_update_rejects_priority_above_configured_max() {
     let _guard = enter_dir(temp_dir.path());
     let pearls_dir = init_repo(temp_dir.path());
 
-    let mut config = pearls_core::Config::default();
-    config.default_priority = 1;
-    config.max_priority = 1;
+    let config = pearls_core::Config {
+        default_priority: 1,
+        max_priority: 1,
+        ..Default::default()
+    };
     config.save(&pearls_dir).expect("Failed to save config");
 
     let pearl = pearls_core::Pearl::new("Update target".to_string(), "alice".to_string());
@@ -887,9 +891,11 @@ fn test_import_beads_skips_priorities_above_configured_max() {
     let _guard = enter_dir(temp_dir.path());
     let pearls_dir = init_repo(temp_dir.path());
 
-    let mut config = pearls_core::Config::default();
-    config.default_priority = 1;
-    config.max_priority = 1;
+    let config = pearls_core::Config {
+        default_priority: 1,
+        max_priority: 1,
+        ..Default::default()
+    };
     config.save(&pearls_dir).expect("Failed to save config");
 
     let mut allowed = pearls_core::Pearl::new("Allowed".to_string(), "alice".to_string());
