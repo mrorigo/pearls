@@ -5,6 +5,7 @@
 use git2::Repository;
 use pearls_cli::OutputFormatter;
 use pearls_core::{Pearl, Status, Storage};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -294,4 +295,60 @@ fn test_concurrent_cli_writes_are_serialized_without_data_loss() {
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(line);
         assert!(parsed.is_ok(), "Each JSONL line must be valid JSON");
     }
+}
+
+#[test]
+fn test_concurrent_cli_create_same_title_author_persists_unique_pearls() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    Repository::init(temp_dir.path()).expect("Failed to init git repo");
+    let prl_bin = env!("CARGO_BIN_EXE_prl");
+
+    let init = Command::new(prl_bin)
+        .arg("init")
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("Failed to run prl init");
+    assert!(
+        init.status.success(),
+        "prl init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+
+    let total_creates = 30;
+    let mut handles = Vec::with_capacity(total_creates);
+    for _ in 0..total_creates {
+        let repo = temp_dir.path().to_path_buf();
+        let bin = prl_bin.to_string();
+        handles.push(std::thread::spawn(move || {
+            Command::new(bin)
+                .arg("create")
+                .arg("Same concurrent title")
+                .arg("--author")
+                .arg("same-author")
+                .arg("--json")
+                .current_dir(repo)
+                .output()
+                .expect("Failed to run prl create")
+        }));
+    }
+
+    let mut failures = Vec::new();
+    for handle in handles {
+        let output = handle.join().expect("create thread panicked");
+        if !output.status.success() {
+            failures.push(String::from_utf8_lossy(&output.stderr).to_string());
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "Concurrent creates failed: {}",
+        failures.join(" | ")
+    );
+
+    let storage = Storage::new(temp_dir.path().join(".pearls/issues.jsonl"))
+        .expect("Failed to create storage");
+    let pearls = storage.load_all_strict().expect("Failed to load pearls");
+    assert_eq!(pearls.len(), total_creates);
+    let ids: HashSet<&str> = pearls.iter().map(|pearl| pearl.id.as_str()).collect();
+    assert_eq!(ids.len(), total_creates, "created IDs must be unique");
 }

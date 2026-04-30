@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 rayon = { workspace = true }
 fs2 = { workspace = true }
+libc = { workspace = true }
 chrono = { workspace = true }
 
 [dev-dependencies]

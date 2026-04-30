@@ -56,7 +56,7 @@ fn arb_pearl() -> impl Strategy<Value = Pearl> {
         prop::collection::vec(arb_dependency(), 0..5),
         prop::collection::hash_map(
             prop::string::string_regex("[a-z_]{1,20}").unwrap(),
-            any::<String>().prop_map(|s| serde_json::Value::String(s)),
+            any::<String>().prop_map(serde_json::Value::String),
             0..5,
         ),
     )

@@ -41,8 +41,24 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
     let cutoff = Utc::now() - Duration::days(i64::from(threshold_days));
     let cutoff_ts = cutoff.timestamp();
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
+    let issues_path = pearls_dir.join("issues.jsonl");
+    let lock_storage = Storage::new(issues_path.clone())?;
+    lock_storage.with_repository_lock(|| {
+        let mut storage = Storage::new(issues_path)?;
+        storage.with_lock(|storage| {
+            compact_with_storage(storage, pearls_dir, threshold_days, cutoff_ts, dry_run)
+        })
+    })
+}
+
+fn compact_with_storage(
+    storage: &mut Storage,
+    pearls_dir: &Path,
+    threshold_days: u32,
+    cutoff_ts: i64,
+    dry_run: bool,
+) -> Result<()> {
+    let pearls = storage.load_all_strict()?;
 
     let (archive_candidates, remaining): (Vec<Pearl>, Vec<Pearl>) = pearls
         .into_iter()
@@ -103,20 +119,38 @@ pub fn execute(threshold_days: Option<u32>, dry_run: bool) -> Result<()> {
     let archive_path = pearls_dir.join("archive.jsonl");
     let mut archive_storage = Storage::new(archive_path.clone())?;
     let archive_pearls = if archive_path.exists() {
-        archive_storage.load_all()?
+        archive_storage.load_all_strict()?
     } else {
         Vec::new()
     };
 
-    let mut archive_map: HashMap<String, Pearl> = archive_pearls
-        .into_iter()
-        .map(|pearl| (pearl.id.clone(), pearl))
-        .collect();
+    let mut archive_map: HashMap<String, Pearl> = HashMap::new();
+    for pearl in archive_pearls {
+        if let Some(existing) = archive_map.get(&pearl.id) {
+            if existing != &pearl {
+                anyhow::bail!(
+                    "Cannot compact: archive already contains a different Pearl with ID {}",
+                    pearl.id
+                );
+            }
+        } else {
+            archive_map.insert(pearl.id.clone(), pearl);
+        }
+    }
 
     let total = archive_candidates.len();
     let progress = ProgressReporter::new("Archiving", Some(total), 1000);
     for (idx, pearl) in archive_candidates.into_iter().enumerate() {
-        archive_map.entry(pearl.id.clone()).or_insert(pearl);
+        if let Some(existing) = archive_map.get(&pearl.id) {
+            if existing != &pearl {
+                anyhow::bail!(
+                    "Cannot compact Pearl {}: archive already contains a different Pearl with the same ID",
+                    pearl.id
+                );
+            }
+        } else {
+            archive_map.insert(pearl.id.clone(), pearl);
+        }
         progress.report(idx + 1);
     }
     progress.finish(total);

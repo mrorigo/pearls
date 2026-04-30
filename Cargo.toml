@@ -47,6 +47,7 @@ rayon = "1.8"
 
 # File locking
 fs2 = "0.4"
+libc = "0.2"
 
 # Time
 chrono = "0.4"
