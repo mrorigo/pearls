@@ -144,6 +144,40 @@ fn unique_temp_path(path: &Path, marker: &str) -> PathBuf {
     path.with_extension(temp_extension)
 }
 
+/// Syncs a file to durable storage, tolerating filesystems that do not
+/// support `F_FULLFSYNC` (e.g. macOS SMB mounts, which return `EOPNOTSUPP`).
+///
+/// On macOS, `File::sync_all()` issues `fcntl(F_FULLFSYNC)`; when that is
+/// unsupported we fall back to plain `fsync`, which those filesystems do
+/// support. On other platforms this is just `File::sync_all()`.
+fn sync_file(file: &std::fs::File) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = file.as_raw_fd();
+        let ret = unsafe { libc::fcntl(fd, libc::F_FULLFSYNC) };
+        if ret == 0 {
+            return Ok(());
+        }
+        let err = std::io::Error::last_os_error();
+        if matches!(
+            err.raw_os_error(),
+            Some(libc::EOPNOTSUPP) | Some(libc::ENOTSUP) | Some(libc::EINVAL)
+        ) {
+            let ret = unsafe { libc::fsync(fd) };
+            if ret == 0 {
+                return Ok(());
+            }
+            return Err(Error::Io(std::io::Error::last_os_error()));
+        }
+        Err(Error::Io(err))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        file.sync_all().map_err(Error::Io)
+    }
+}
+
 #[cfg(unix)]
 fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -358,7 +392,7 @@ impl Index {
             write_u64(&mut file, *offset)?;
         }
 
-        file.sync_all()?;
+        sync_file(&file)?;
         Self::validate_path(&path)?;
         std::fs::rename(&temp_path, &path)?;
 
@@ -1324,7 +1358,7 @@ impl Storage {
                 file.write_all(json.as_bytes())?;
                 file.write_all(b"\n")?;
             }
-            file.sync_all()?;
+            sync_file(&file)?;
             Ok(())
         })();
 
