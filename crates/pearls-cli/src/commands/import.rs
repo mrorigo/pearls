@@ -14,6 +14,12 @@ use crate::progress::ProgressReporter;
 
 /// Imports Pearls from a Beads JSONL file.
 ///
+/// The import is a merge. Pearls already in the repository are kept, and the
+/// incoming Pearls are added to them. When an incoming Pearl has the same ID
+/// as a stored Pearl, the incoming version replaces the stored one, matching
+/// the update-in-place behavior of an explicit user edit elsewhere in the
+/// CLI. The whole set is written in one locked transaction.
+///
 /// # Arguments
 ///
 /// * `path` - Path to the Beads JSONL file
@@ -92,7 +98,7 @@ pub fn import_beads(path: String) -> Result<()> {
     }
 
     let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    storage.save_all(&pearls)?;
+    storage.merge_all(&pearls)?;
 
     if is_json_output() {
         println!(

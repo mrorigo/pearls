@@ -1045,6 +1045,36 @@ impl Storage {
         let pearls_to_save = pearls.to_vec();
         self.with_lock(move |storage| storage.save_all_unlocked(&pearls_to_save))
     }
+
+    /// Merges Pearls into the JSONL file without removing stored Pearls.
+    ///
+    /// Unlike [`Storage::save_all`], this is a merge. The stored set is loaded
+    /// while the storage lock is held and the incoming Pearls are upserted
+    /// into it, so the result is written in a single locked transaction. A
+    /// Pearl whose ID already exists is replaced by the incoming version,
+    /// matching the update-in-place behavior of [`Storage::save`]. The write
+    /// uses the same atomic temp file + rename sequence as every other write
+    /// path.
+    ///
+    /// # Arguments
+    ///
+    /// * `pearls` - The Pearls to merge into the file
+    ///
+    /// # Returns
+    ///
+    /// Ok if the merge was successful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Any Pearl fails validation
+    /// - The stored file cannot be read
+    /// - The file cannot be written
+    /// - The atomic write operation fails
+    pub fn merge_all(&mut self, pearls: &[Pearl]) -> Result<()> {
+        let pearls_to_merge = pearls.to_vec();
+        self.with_lock(move |storage| storage.merge_all_unlocked(&pearls_to_merge))
+    }
 }
 
 impl Storage {
@@ -1338,6 +1368,31 @@ impl Storage {
         }
 
         self.save_all_unlocked(&pearls)
+    }
+
+    fn merge_all_unlocked(&mut self, incoming: &[Pearl]) -> Result<()> {
+        // Load the stored set while the lock is held so the merge and the
+        // write stay in a single locked transaction.
+        let mut stored = self.load_all_strict()?;
+
+        // Upsert in place to keep one record per ID and preserve stored order.
+        let mut positions: HashMap<String, usize> = stored
+            .iter()
+            .enumerate()
+            .map(|(pos, pearl)| (pearl.id.clone(), pos))
+            .collect();
+
+        for pearl in incoming {
+            match positions.get(&pearl.id) {
+                Some(pos) => stored[*pos] = pearl.clone(),
+                None => {
+                    positions.insert(pearl.id.clone(), stored.len());
+                    stored.push(pearl.clone());
+                }
+            }
+        }
+
+        self.save_all_unlocked(&stored)
     }
 
     fn save_all_unlocked(&mut self, pearls: &[Pearl]) -> Result<()> {

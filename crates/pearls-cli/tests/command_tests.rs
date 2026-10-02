@@ -1516,3 +1516,88 @@ fn test_create_falls_back_to_system_username() {
         std::env::remove_var("USER");
     }
 }
+
+#[test]
+fn test_import_beads_preserves_existing_pearls() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let existing = pearls_core::Pearl::new("Existing Pearl".to_string(), "alice".to_string());
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage
+        .save(&existing)
+        .expect("Failed to save existing Pearl");
+
+    let incoming = pearls_core::Pearl::new("Incoming Pearl".to_string(), "bob".to_string());
+    let beads_path = temp_dir.path().join("beads.jsonl");
+    let line = serde_json::to_string(&incoming).unwrap();
+    fs::write(&beads_path, format!("{}\n", line)).expect("Failed to write beads file");
+
+    pearls_cli::commands::import::import_beads(beads_path.to_string_lossy().to_string())
+        .expect("Import failed");
+
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    let ids: Vec<&str> = pearls.iter().map(|p| p.id.as_str()).collect();
+    assert!(
+        ids.contains(&existing.id.as_str()),
+        "Import must not delete existing Pearls; stored ids: {ids:?}"
+    );
+    assert!(
+        ids.contains(&incoming.id.as_str()),
+        "Imported Pearl should be present; stored ids: {ids:?}"
+    );
+}
+
+#[test]
+fn test_import_beads_replaces_existing_pearl_with_same_id() {
+    let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    let _guard = enter_dir(temp_dir.path());
+    let pearls_dir = init_repo(temp_dir.path());
+
+    let existing = pearls_core::Pearl::new("Original Title".to_string(), "alice".to_string());
+    let mut storage =
+        Storage::new(pearls_dir.join("issues.jsonl")).expect("Failed to create storage");
+    storage
+        .save(&existing)
+        .expect("Failed to save existing Pearl");
+
+    // The incoming Pearl reuses the stored ID with a different body.
+    let mut incoming = pearls_core::Pearl::new("Incoming Title".to_string(), "bob".to_string());
+    incoming.id = existing.id.clone();
+
+    let other = pearls_core::Pearl::new("Other Pearl".to_string(), "carol".to_string());
+    let beads_path = temp_dir.path().join("beads.jsonl");
+    let payload = format!(
+        "{}\n{}\n",
+        serde_json::to_string(&incoming).unwrap(),
+        serde_json::to_string(&other).unwrap()
+    );
+    fs::write(&beads_path, payload).expect("Failed to write beads file");
+
+    pearls_cli::commands::import::import_beads(beads_path.to_string_lossy().to_string())
+        .expect("Import failed");
+
+    let pearls = storage.load_all().expect("Failed to load pearls");
+    let ids: Vec<&str> = pearls.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        pearls.len(),
+        2,
+        "Colliding ID must update in place, not duplicate; stored ids: {ids:?}"
+    );
+
+    let stored = pearls
+        .iter()
+        .find(|p| p.id == existing.id)
+        .expect("Colliding ID should still be present");
+    assert_eq!(
+        stored.title, incoming.title,
+        "Incoming version should replace the stored Pearl"
+    );
+
+    assert!(
+        ids.contains(&other.id.as_str()),
+        "Unrelated incoming Pearl should be added; stored ids: {ids:?}"
+    );
+}
