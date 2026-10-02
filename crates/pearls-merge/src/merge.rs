@@ -3,7 +3,7 @@
 //! Three-way merge algorithm for Pearls JSONL files.
 
 use anyhow::Result;
-use pearls_core::{DepType, Dependency, Pearl};
+use pearls_core::{Comment, DepType, Dependency, Pearl};
 use std::collections::{HashMap, HashSet};
 
 /// Conflict encountered during merge.
@@ -112,6 +112,7 @@ fn merge_pearl(ours: &Pearl, theirs: &Pearl) -> Result<Pearl> {
     merged.created_at = std::cmp::min(ours.created_at, theirs.created_at);
     merged.labels = union_labels(&ours.labels, &theirs.labels);
     merged.deps = union_deps(&ours.deps, &theirs.deps);
+    merged.comments = union_comments(&ours.comments, &theirs.comments);
     merged.metadata = merge_metadata(
         &ours.metadata,
         &theirs.metadata,
@@ -153,6 +154,23 @@ fn union_deps(ours: &[Dependency], theirs: &[Dependency]) -> Vec<Dependency> {
         .collect();
     deps.sort_by(|a, b| a.target_id.cmp(&b.target_id));
     deps
+}
+
+/// Unions comments by comment ID so a comment added on either branch survives.
+///
+/// Comments are append-only, so both sides contribute. Ordering is by
+/// `(created_at, id)`, which is total and independent of hash iteration, so
+/// identical input always produces the identical list.
+fn union_comments(ours: &[Comment], theirs: &[Comment]) -> Vec<Comment> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut comments: Vec<Comment> = ours
+        .iter()
+        .chain(theirs.iter())
+        .filter(|comment| seen.insert(comment.id.as_str()))
+        .cloned()
+        .collect();
+    comments.sort_by_key(|comment| (comment.created_at, comment.id.clone()));
+    comments
 }
 
 fn merge_metadata(
