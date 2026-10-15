@@ -11,9 +11,11 @@
 //! externally reverted Git history. Receipt expiration is not implemented yet.
 
 mod mutations;
+mod reads;
 mod types;
 
 pub use pearls_core::repository::{GraphRevision, OperationReceipt, RepositorySnapshot};
+pub use reads::{BlockedTask, GraphSnapshot, ScheduleBlockReason, ScheduleResult, TaskSelection};
 pub use types::{
     BatchRequest, CreateTask, Mutation, TaskPatch, TaskRef, API_VERSION, EXTERNAL_DEFINITION,
     EXTERNAL_KEY,
@@ -52,9 +54,42 @@ impl GraphService {
     /// # Errors
     /// Returns graph, external-key, or typed storage failures.
     pub fn snapshot(&self) -> Result<RepositorySnapshot> {
+        self.validated_snapshot().map(|(snapshot, _)| snapshot)
+    }
+
+    /// Reads requested tasks and their transitive outgoing relationship targets.
+    ///
+    /// # Arguments
+    /// * `selection` - Explicit full IDs; duplicates are ignored and empty is valid.
+    ///
+    /// # Errors
+    /// Returns `NotFound` for unknown IDs, or graph, identity, and storage failures.
+    /// The complete repository is validated before selecting tasks.
+    pub fn snapshot_for(&self, selection: &TaskSelection) -> Result<GraphSnapshot> {
+        let (snapshot, graph) = self.validated_snapshot()?;
+        reads::snapshot(snapshot, &graph, selection)
+    }
+
+    /// Computes disjoint scheduling sets for explicitly requested tasks.
+    ///
+    /// Every fact, including blockers outside the selection, comes from the same
+    /// repository read. Ready contains only unblocked Open tasks. An empty ready
+    /// set does not imply completion.
+    ///
+    /// # Arguments
+    /// * `selection` - Explicit full IDs, including archived tasks when required.
+    ///
+    /// # Errors
+    /// Returns `NotFound` for unknown IDs, or graph, identity, and storage failures.
+    pub fn schedule(&self, selection: &TaskSelection) -> Result<ScheduleResult> {
+        let (snapshot, graph) = self.validated_snapshot()?;
+        reads::schedule(snapshot, &graph, selection)
+    }
+
+    fn validated_snapshot(&self) -> Result<(RepositorySnapshot, pearls_core::IssueGraph)> {
         let snapshot = self.store.snapshot()?;
-        mutations::validate(&snapshot.data)?;
-        Ok(snapshot)
+        let graph = mutations::validate(&snapshot.data)?;
+        Ok((snapshot, graph))
     }
 
     /// Retrieves the durable receipt for an opaque operation key.
