@@ -16,6 +16,7 @@ pub mod fsm;
 pub mod graph;
 pub mod identity;
 pub mod models;
+pub mod repository;
 pub mod storage;
 
 pub use config::{Config, OutputFormat};
