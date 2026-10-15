@@ -27,18 +27,7 @@ use std::path::Path;
 pub fn pre_commit_hook(repo_path: &Path) -> Result<()> {
     let pearls_path = repo_path.join(".pearls/issues.jsonl");
     let mut storage = Storage::new(pearls_path)?;
-    let pearls = storage.load_all()?;
-
-    for pearl in &pearls {
-        pearl.validate()?;
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    for pearl in &pearls {
-        if !seen.insert(&pearl.id) {
-            anyhow::bail!("Duplicate Pearl ID detected: {}", pearl.id);
-        }
-    }
+    let pearls = storage.load_all_strict()?;
 
     if let Some(fix_ids) = extract_fix_ids(&repo_path.join(".git/COMMIT_EDITMSG"))? {
         if !fix_ids.is_empty() {
