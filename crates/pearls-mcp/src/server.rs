@@ -1053,6 +1053,9 @@ fn map_app_error(error: AppError) -> ErrorData {
         pearls_app::ErrorCode::AmbiguousId
         | pearls_app::ErrorCode::InvalidTransition
         | pearls_app::ErrorCode::ValidationError
+        | pearls_app::ErrorCode::RevisionConflict
+        | pearls_app::ErrorCode::IdempotencyConflict
+        | pearls_app::ErrorCode::ExternalKeyConflict
         | pearls_app::ErrorCode::InvalidGraph
         | pearls_app::ErrorCode::InvalidInput
         | pearls_app::ErrorCode::RepoNotInitialized => {
@@ -1061,6 +1064,8 @@ fn map_app_error(error: AppError) -> ErrorData {
         pearls_app::ErrorCode::IoError
         | pearls_app::ErrorCode::GitError
         | pearls_app::ErrorCode::JsonError
+        | pearls_app::ErrorCode::LockTimeout
+        | pearls_app::ErrorCode::CorruptStorage
         | pearls_app::ErrorCode::Unknown => ErrorData::internal_error(envelope.message, data),
     }
 }
