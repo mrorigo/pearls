@@ -22,6 +22,8 @@ pub enum ErrorCode {
     InvalidTransition,
     /// Input validation failed.
     ValidationError,
+    /// The complete task graph has invalid endpoints, identities, or cycles.
+    InvalidGraph,
     /// IO failure while reading or writing repository data.
     IoError,
     /// Git operation error.
@@ -71,8 +73,9 @@ impl AppError {
                 CoreError::NotFound(_) => ErrorCode::NotFound,
                 CoreError::AmbiguousId(_, _) => ErrorCode::AmbiguousId,
                 CoreError::InvalidTransition(_) => ErrorCode::InvalidTransition,
+                CoreError::TransitionDenied(_) => ErrorCode::InvalidTransition,
                 CoreError::InvalidPearl(_) => ErrorCode::ValidationError,
-                CoreError::CycleDetected(_) => ErrorCode::ValidationError,
+                CoreError::CycleDetected(_) | CoreError::InvalidGraph(_) => ErrorCode::InvalidGraph,
                 CoreError::Io(_) => ErrorCode::IoError,
                 CoreError::Json(_) => ErrorCode::JsonError,
                 CoreError::Git(_) => ErrorCode::GitError,
@@ -97,6 +100,8 @@ impl AppError {
                 CoreError::CycleDetected(cycle) => Some(serde_json::json!({
                     "cycle": cycle,
                 })),
+                CoreError::InvalidGraph(issue) => serde_json::to_value(issue).ok(),
+                CoreError::TransitionDenied(denial) => serde_json::to_value(denial).ok(),
                 _ => None,
             },
         }

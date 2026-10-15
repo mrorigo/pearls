@@ -1053,6 +1053,7 @@ fn map_app_error(error: AppError) -> ErrorData {
         pearls_app::ErrorCode::AmbiguousId
         | pearls_app::ErrorCode::InvalidTransition
         | pearls_app::ErrorCode::ValidationError
+        | pearls_app::ErrorCode::InvalidGraph
         | pearls_app::ErrorCode::InvalidInput
         | pearls_app::ErrorCode::RepoNotInitialized => {
             ErrorData::invalid_params(envelope.message, data)
