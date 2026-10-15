@@ -883,6 +883,9 @@ fn test_doctor_fix_repairs_common_issues() {
     let pearls_dir = init_repo(temp_dir.path());
 
     let pearl = pearls_core::Pearl::new("Dup".to_string(), "alice".to_string());
+    let mut newer_duplicate = pearl.clone();
+    newer_duplicate.title = "Newest duplicate".to_string();
+    newer_duplicate.updated_at += 1;
     let mut orphaned = pearls_core::Pearl::new("Orphan".to_string(), "bob".to_string());
     orphaned.deps.push(pearls_core::Dependency {
         target_id: "prl-missing".to_string(),
@@ -892,7 +895,7 @@ fn test_doctor_fix_repairs_common_issues() {
     let mut content = String::new();
     content.push_str(&serde_json::to_string(&pearl).unwrap());
     content.push('\n');
-    content.push_str(&serde_json::to_string(&pearl).unwrap());
+    content.push_str(&serde_json::to_string(&newer_duplicate).unwrap());
     content.push('\n');
     content.push_str(&serde_json::to_string(&orphaned).unwrap());
     content.push('\n');
@@ -909,6 +912,12 @@ fn test_doctor_fix_repairs_common_issues() {
         2,
         "Doctor should remove duplicate and invalid lines"
     );
+    let repaired_duplicate = pearls
+        .iter()
+        .find(|pearl| pearl.id == newer_duplicate.id)
+        .expect("Doctor should retain the duplicate Pearl");
+    assert_eq!(repaired_duplicate.title, newer_duplicate.title);
+    assert_eq!(repaired_duplicate.updated_at, newer_duplicate.updated_at);
     for pearl in &pearls {
         assert!(pearl.deps.is_empty(), "Orphaned deps should be removed");
     }
