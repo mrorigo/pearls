@@ -5,7 +5,7 @@
 //! These tests validate specific examples, edge cases, and error conditions
 //! for dependency graphs, cycle detection, and ready queue computation.
 
-use pearls_core::{DepType, Dependency, IssueGraph, Pearl, Status};
+use pearls_core::{DepType, Dependency, Error, IssueGraph, Pearl, Status};
 use std::collections::HashMap;
 
 /// Helper to create a Pearl with given ID and status.
@@ -375,6 +375,38 @@ fn test_add_dependency_nonexistent_pearl() {
     assert!(
         result.is_err(),
         "Adding dependency to nonexistent Pearl should fail"
+    );
+}
+
+#[test]
+fn test_add_dependency_cycle_fails_without_mutating_graph_or_pearl() {
+    let first = create_pearl("prl-a1b2c3", Status::Open);
+    let mut second = create_pearl("prl-d4e5f6", Status::Open);
+    second.deps.push(Dependency {
+        target_id: first.id.clone(),
+        dep_type: DepType::Blocks,
+    });
+    let mut graph = IssueGraph::from_pearls(vec![first.clone(), second]).expect("Valid graph");
+
+    let result = graph.add_dependency(&first.id, "prl-d4e5f6", DepType::Blocks);
+
+    assert!(matches!(result, Err(Error::CycleDetected(_))));
+    assert!(
+        !graph.has_cycle(),
+        "Rejected edge must be removed from graph"
+    );
+    assert!(
+        graph
+            .dependencies_by_type(&first.id, DepType::Blocks)
+            .is_empty(),
+        "Rejected edge must not be added to Pearl dependencies"
+    );
+    assert_eq!(
+        graph
+            .dependencies_by_type("prl-d4e5f6", DepType::Blocks)
+            .len(),
+        1,
+        "Existing dependency must remain intact"
     );
 }
 

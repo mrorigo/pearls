@@ -105,18 +105,15 @@ impl IssueGraph {
             .copied()
             .ok_or_else(|| Error::NotFound(format!("Pearl {} not found", to_id)))?;
 
-        // Add the edge temporarily
-        self.graph.add_edge(from_idx, to_idx, dep_type);
+        // Add the edge temporarily so cycle detection sees the proposed graph.
+        let edge_idx = self.graph.add_edge(from_idx, to_idx, dep_type);
 
         // Check for cycles
         if is_cyclic_directed(&self.graph) {
-            // Remove the edge if it creates a cycle
-            if let Some(edge_idx) = self.graph.find_edge(from_idx, to_idx) {
-                self.graph.remove_edge(edge_idx);
-            }
-            if let Some(cycle) = Self::find_cycle_internal(&self.graph, &self.id_to_node) {
-                return Err(Error::CycleDetected(cycle));
-            }
+            let cycle = Self::find_cycle_internal(&self.graph, &self.id_to_node)
+                .unwrap_or_else(|| vec!["cycle_detected".to_string()]);
+            self.graph.remove_edge(edge_idx);
+            return Err(Error::CycleDetected(cycle));
         }
 
         // Update the Pearl's dependencies
