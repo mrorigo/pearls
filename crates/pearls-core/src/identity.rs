@@ -151,7 +151,7 @@ pub fn validate_id_format(id: &str) -> Result<()> {
 /// ```
 pub fn resolve_partial_id(partial: &str, pearls: &[Pearl]) -> Result<String> {
     // Require minimum 3 characters for partial ID matching
-    if partial.len() < 3 {
+    if partial.chars().count() < 3 {
         return Err(Error::InvalidPearl(
             "Partial ID must be at least 3 characters".to_string(),
         ));
@@ -167,9 +167,10 @@ pub fn resolve_partial_id(partial: &str, pearls: &[Pearl]) -> Result<String> {
     match matches.len() {
         0 => {
             // No matches - suggest similar IDs
+            let similarity_prefix: String = partial.chars().take(4).collect();
             let similar: Vec<String> = pearls
                 .iter()
-                .filter(|p| p.id.contains(&partial[..partial.len().min(4)]))
+                .filter(|p| p.id.contains(&similarity_prefix))
                 .take(3)
                 .map(|p| p.id.clone())
                 .collect();
