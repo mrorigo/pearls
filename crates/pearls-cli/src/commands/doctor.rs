@@ -7,7 +7,7 @@
 use crate::output_mode::is_json_output;
 use anyhow::Result;
 use pearls_core::{IssueGraph, Pearl, Status, Storage};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -212,15 +212,18 @@ fn severity_label(severity: Severity) -> &'static str {
 }
 
 fn dedupe_pearls(pearls: &[Pearl]) -> (Vec<Pearl>, Vec<String>) {
-    let mut seen = HashSet::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
     let mut dupes = Vec::new();
-    let mut unique = Vec::new();
+    let mut unique: Vec<Pearl> = Vec::new();
 
     for pearl in pearls {
-        if seen.contains(&pearl.id) {
+        if let Some(&position) = positions.get(&pearl.id) {
             dupes.push(pearl.id.clone());
+            if pearl.updated_at > unique[position].updated_at {
+                unique[position] = pearl.clone();
+            }
         } else {
-            seen.insert(pearl.id.clone());
+            positions.insert(pearl.id.clone(), unique.len());
             unique.push(pearl.clone());
         }
     }
