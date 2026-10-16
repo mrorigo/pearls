@@ -6,8 +6,9 @@
 //! and persists them to the JSONL file.
 
 use crate::output_mode::is_json_output;
+use pearls_app::service::{resolve_active_task, GraphService, Mutation, TaskRef};
+
 use anyhow::Result;
-use pearls_core::{Config, Storage};
 use std::path::Path;
 
 /// Updates a Pearl with the specified field changes.
@@ -51,75 +52,44 @@ pub fn execute(
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let config = Config::load(pearls_dir)?;
-    let max_priority = config.max_priority;
-
-    // Resolve, update, and save while holding the storage lock.
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearl = storage.with_lock(|storage| {
-        let all_pearls = storage.load_all()?;
-        let full_id = pearls_core::identity::resolve_partial_id(&id, &all_pearls)?;
-        let mut pearl = storage.load_by_id(&full_id)?;
-
-        if let Some(new_title) = title.clone() {
-            pearl.title = new_title;
-        }
-
-        let mut provided_description = description.clone();
-        if let Some(desc_path) = description_file.clone() {
-            provided_description = Some(read_description_from_path(&desc_path)?);
-        }
-
-        if let Some(new_description) = provided_description {
-            enforce_description_limit(&new_description)?;
-            pearl.description = new_description;
-        }
-
-        if let Some(new_priority) = priority {
-            if new_priority > max_priority {
-                anyhow::bail!("Priority must be 0-{}, got {}", max_priority, new_priority);
-            }
-            pearl.priority = new_priority;
-        }
-
-        if let Some(new_status) = status.clone() {
-            let new_status_enum = match new_status.to_lowercase().as_str() {
-                "open" => pearls_core::Status::Open,
-                "in_progress" | "in-progress" => pearls_core::Status::InProgress,
-                "blocked" => pearls_core::Status::Blocked,
-                "deferred" => pearls_core::Status::Deferred,
-                "closed" => pearls_core::Status::Closed,
-                _ => anyhow::bail!("Invalid status: {}", new_status),
-            };
-            let graph = pearls_core::graph::IssueGraph::from_pearls(all_pearls)?;
-            pearls_core::fsm::validate_transition(&pearl, new_status_enum, &graph)?;
-            pearl.status = new_status_enum;
-        }
-
-        if !add_labels.is_empty() {
-            for label in &add_labels {
-                if !pearl.labels.contains(label) {
-                    pearl.labels.push(label.clone());
-                }
+    let mut provided_description = description;
+    if let Some(path) = description_file {
+        provided_description = Some(read_description_from_path(&path)?);
+    }
+    let status = status
+        .as_deref()
+        .map(pearls_app::parse_status)
+        .transpose()?;
+    let mut full_id = String::new();
+    let result = GraphService::open(".")?.execute(|snapshot| {
+        let pearl = resolve_active_task(&snapshot.data, &id)?;
+        full_id = pearl.id.clone();
+        let mut labels = pearl.labels.clone();
+        for label in &add_labels {
+            if !labels.contains(label) {
+                labels.push(label.clone());
             }
         }
-
-        if !remove_labels.is_empty() {
-            for label in &remove_labels {
-                pearl.labels.retain(|l| l != label);
-            }
+        labels.retain(|label| !remove_labels.contains(label));
+        super::utils::suggest_labels(&snapshot.data.active, &add_labels);
+        let mut mutations = vec![Mutation::Update {
+            task: TaskRef::Id(full_id.clone()),
+            patch: pearls_app::service::TaskPatch {
+                title,
+                description: provided_description,
+                priority,
+                labels: Some(labels),
+            },
+        }];
+        if let Some(status) = status {
+            mutations.push(Mutation::SetStatus {
+                task: TaskRef::Id(full_id.clone()),
+                status,
+            });
         }
-
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        pearl.updated_at = now;
-        pearl.validate()?;
-        if !add_labels.is_empty() {
-            super::utils::suggest_labels(storage, &add_labels)?;
-        }
-        storage.save(&pearl)?;
-        Ok(pearl)
+        Ok(mutations)
     })?;
+    let pearl = result.task(&full_id)?;
 
     if is_json_output() {
         println!(
@@ -155,12 +125,4 @@ fn read_description_from_path(path: &str) -> Result<String> {
     }
 
     Ok(std::fs::read_to_string(path)?)
-}
-
-fn enforce_description_limit(description: &str) -> Result<()> {
-    const MAX_BYTES: usize = 64 * 1024;
-    if description.len() > MAX_BYTES {
-        anyhow::bail!("Description exceeds 64KB limit");
-    }
-    Ok(())
 }

@@ -11,6 +11,7 @@ name = "pearls_hooks"
 path = "src/lib.rs"
 
 [dependencies]
+pearls-app = { path = "../pearls-app" }
 pearls-core = { path = "../pearls-core" }
 anyhow = { workspace = true }
 

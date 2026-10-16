@@ -83,8 +83,8 @@ fn check_content(description: &str, priority: u8, config: &Config) -> Result<()>
     }
     if priority > config.max_priority {
         return Err(AppError::InvalidInput(format!(
-            "Priority must be 0-{}",
-            config.max_priority
+            "Priority must be 0-{}, got {}",
+            config.max_priority, priority
         )));
     }
     Ok(())
@@ -123,7 +123,7 @@ fn create(data: &mut RepositoryData, task: &CreateTask, config: &Config) -> Resu
     let mut pearl = Pearl::new(task.title.clone(), task.author.clone());
     pearl.created_at = now;
     pearl.updated_at = now;
-    pearl.id = (0..1024)
+    pearl.id = (0..65_536)
         .map(|nonce| pearls_core::identity::generate_id(&task.title, &task.author, now, nonce))
         .find(|id| !all(data).any(|existing| existing.id == *id))
         .ok_or_else(|| AppError::InvalidInput("Task ID candidate space exhausted".into()))?;
@@ -154,6 +154,42 @@ pub(super) fn apply(
     let mut locals = BTreeMap::new();
     for mutation in mutations {
         match mutation {
+            Mutation::Import { tasks } => {
+                let before = data.clone();
+                for task in tasks {
+                    check_content(&task.description, task.priority, config)?;
+                    if data.archived.iter().any(|archived| archived.id == task.id) {
+                        return Err(AppError::InvalidInput(format!(
+                            "Cannot import over archived task {}",
+                            task.id
+                        )));
+                    }
+                    if let Some(position) = data
+                        .active
+                        .iter()
+                        .position(|existing| existing.id == task.id)
+                    {
+                        for key in [EXTERNAL_KEY, EXTERNAL_DEFINITION] {
+                            if data.active[position].metadata.get(key) != task.metadata.get(key) {
+                                return Err(AppError::InvalidInput(format!(
+                                    "Import cannot replace reserved metadata: {key}"
+                                )));
+                            }
+                        }
+                        data.active[position] = task.clone();
+                    } else {
+                        data.active.push(task.clone());
+                    }
+                }
+                let graph = validate(data)?;
+                for previous in &before.active {
+                    if let Some(current) = data.active.iter().find(|task| task.id == previous.id) {
+                        if previous.status != current.status {
+                            pearls_core::validate_transition(previous, current.status, &graph)?;
+                        }
+                    }
+                }
+            }
             Mutation::Create { local_ref, task } => {
                 if local_ref.is_empty() || locals.contains_key(local_ref) {
                     return Err(AppError::InvalidInput(format!(

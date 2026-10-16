@@ -62,6 +62,73 @@ fn test_post_merge_detects_orphaned_deps() {
         Storage::new(repo_path.join(".pearls/issues.jsonl")).expect("Failed to create storage");
     storage.save(&pearl).expect("Failed to save pearl");
 
-    // Orphaned deps should warn but not error.
-    post_merge_hook(repo_path).expect("Post-merge hook failed");
+    // Supported reads reject missing endpoints after an external merge.
+    let error = post_merge_hook(repo_path).expect_err("Missing endpoint must fail validation");
+    assert!(error.to_string().contains("prl-missing"));
+}
+
+#[test]
+fn auto_close_is_atomic_and_uses_shared_blocker_validation() {
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    std::fs::create_dir(root.path().join(".pearls")).unwrap();
+    let service = pearls_app::service::GraphService::open(root.path()).unwrap();
+    let mut dependent = create_pearl("prl-000001");
+    dependent.deps.push(Dependency {
+        target_id: "prl-000003".into(),
+        dep_type: DepType::Blocks,
+    });
+    service
+        .execute(|_| {
+            Ok(vec![pearls_app::service::Mutation::Import {
+                tasks: vec![
+                    create_pearl("prl-000002"),
+                    dependent,
+                    create_pearl("prl-000003"),
+                ],
+            }])
+        })
+        .unwrap();
+    std::fs::write(
+        root.path().join(".git/COMMIT_EDITMSG"),
+        "Fixes (prl-000002) Fixes (prl-000001)",
+    )
+    .unwrap();
+    let before = service.snapshot().unwrap();
+    assert!(pre_commit_hook(root.path()).is_err());
+    assert_eq!(service.snapshot().unwrap(), before);
+}
+
+#[test]
+fn auto_close_orders_prerequisites_and_skips_already_closed_tasks() {
+    let root = TempDir::new().unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    std::fs::create_dir(root.path().join(".pearls")).unwrap();
+    let service = pearls_app::service::GraphService::open(root.path()).unwrap();
+    let mut dependent = create_pearl("prl-000001");
+    dependent.deps.push(Dependency {
+        target_id: "prl-000002".into(),
+        dep_type: DepType::Blocks,
+    });
+    service
+        .execute(|_| {
+            Ok(vec![pearls_app::service::Mutation::Import {
+                tasks: vec![dependent, create_pearl("prl-000002")],
+            }])
+        })
+        .unwrap();
+    std::fs::write(
+        root.path().join(".git/COMMIT_EDITMSG"),
+        "Fixes (prl-000001) Fixes (prl-000002)",
+    )
+    .unwrap();
+    pre_commit_hook(root.path()).unwrap();
+    let closed = service.snapshot().unwrap();
+    assert!(closed
+        .data
+        .active
+        .iter()
+        .all(|task| task.status == Status::Closed));
+    pre_commit_hook(root.path()).unwrap();
+    assert_eq!(service.snapshot().unwrap(), closed);
 }

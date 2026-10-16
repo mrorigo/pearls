@@ -101,6 +101,16 @@ pub struct OperationReceipt {
     pub created_ids: BTreeMap<String, String>,
 }
 
+/// Fully prepared one-shot operation, computed while holding the repository lock.
+pub struct PreparedOperation {
+    /// Operation identity and the revision of the supplied preparation snapshot.
+    pub request: OperationRequest,
+    /// Complete validated proposal; the application owns semantic validation.
+    pub data: RepositoryData,
+    /// Batch-local creation references mapped to permanent IDs.
+    pub created_ids: BTreeMap<String, String>,
+}
+
 /// Structured failures from repository persistence and concurrency checks.
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryError {
@@ -277,7 +287,7 @@ impl RepositoryStore {
         F: FnOnce(&mut RepositoryData) -> std::result::Result<BTreeMap<String, String>, E>,
         E: From<RepositoryError>,
     {
-        let (mut data, mut state) = self.load()?;
+        let (mut data, state) = self.load()?;
         if let Some(receipt) = state.receipts.get(&request.operation_key) {
             if receipt.request_digest != request.request_digest
                 || receipt.before_revision != request.expected_revision
@@ -297,10 +307,23 @@ impl RepositoryStore {
             }
             .into());
         }
-        let before_files = state.files.clone();
         let before_state = fingerprint(self.files.read(STATE)?.as_deref());
         let created_ids = apply(&mut data)?;
-        let images = self.encode(&data)?;
+        self.commit(request, state, before_state, &data, created_ids)
+            .map_err(E::from)
+    }
+
+    fn commit(
+        &self,
+        request: &OperationRequest,
+        mut state: State,
+        before_state: Option<String>,
+        data: &RepositoryData,
+        created_ids: BTreeMap<String, String>,
+    ) -> Result<OperationReceipt> {
+        let before_files = state.files.clone();
+        let before_revision = state.revision();
+        let images = self.encode(data)?;
         state.advance()?;
         state.files = images.fingerprints();
         let receipt = OperationReceipt {
@@ -315,6 +338,152 @@ impl RepositoryStore {
             .insert(request.operation_key.clone(), receipt.clone());
         self.publish(before_files, before_state, images, state)?;
         Ok(receipt)
+    }
+
+    /// Prepares a one-shot adapter operation under the publication lock.
+    ///
+    /// Legacy adapters have no caller-supplied revision. Preparation observes the
+    /// latest state while holding the same lock as publication. Its callback must
+    /// be pure except for constructing the proposal; it must not perform nested
+    /// storage operations. Reused keys fail rather than replay a newly prepared
+    /// response. Call `transact` for caller-owned idempotency and revision checks.
+    ///
+    /// # Errors
+    /// Returns preparation, input, integrity, revision, or publication failures.
+    pub fn transact_prepared<F, E>(&self, prepare: F) -> std::result::Result<OperationReceipt, E>
+    where
+        F: FnOnce(RepositorySnapshot) -> std::result::Result<PreparedOperation, E>,
+        E: From<RepositoryError>,
+    {
+        self.locked(|| {
+            Ok((|| {
+                let (data, state) = self.load().map_err(E::from)?;
+                let revision = state.revision();
+                let before_state = fingerprint(self.files.read(STATE).map_err(E::from)?.as_deref());
+                let prepared = prepare(RepositorySnapshot {
+                    data,
+                    revision: revision.clone(),
+                })?;
+                let request = &prepared.request;
+                if request.operation_key.is_empty() || request.request_digest.is_empty() {
+                    return Err(E::from(RepositoryError::InvalidInput(
+                        "Operation identity must be nonempty".into(),
+                    )));
+                }
+                if state.receipts.contains_key(&request.operation_key) {
+                    return Err(E::from(RepositoryError::IdempotencyConflict {
+                        operation_key: request.operation_key.clone(),
+                    }));
+                }
+                if request.expected_revision != revision {
+                    return Err(E::from(RepositoryError::RevisionConflict {
+                        expected: request.expected_revision.clone(),
+                        actual: revision,
+                    }));
+                }
+                self.commit(
+                    request,
+                    state,
+                    before_state,
+                    &prepared.data,
+                    prepared.created_ids,
+                )
+                .map_err(E::from)
+            })())
+        })
+        .map_err(E::from)?
+    }
+
+    /// Repairs task images under the repository lock using recoverable publication.
+    ///
+    /// This explicit maintenance entry point permits malformed JSONL input, but
+    /// never bypasses journal recovery, schema checks, or validation of the result.
+    /// Existing receipts are retained. The callback must validate application graph
+    /// semantics and may not perform external writes. Ordinary edits use `transact`.
+    ///
+    /// # Arguments
+    /// * `operation_key` - Unique nonempty maintenance operation identity.
+    /// * `request_digest` - Nonempty maintenance request identity.
+    /// * `repair` - Computes a valid replacement from current active/archive text.
+    ///
+    /// # Errors
+    /// Returns callback, integrity, schema, locking, or publication failures.
+    pub fn repair<F, E>(
+        &self,
+        operation_key: &str,
+        request_digest: &str,
+        repair: F,
+    ) -> std::result::Result<OperationReceipt, E>
+    where
+        F: FnOnce(&str, &str) -> std::result::Result<RepositoryData, E>,
+        E: From<RepositoryError>,
+    {
+        if operation_key.is_empty() || request_digest.is_empty() {
+            return Err(RepositoryError::InvalidInput(
+                "Maintenance identity must be nonempty".into(),
+            )
+            .into());
+        }
+        self.locked(|| {
+            Ok((|| {
+                self.recover().map_err(E::from)?;
+                let before = self.files.images().map_err(E::from)?;
+                let stored = self.files.read(STATE).map_err(E::from)?;
+                let mut state = match stored.as_deref() {
+                    Some(bytes) => {
+                        let state: State = self.files.parse(STATE, bytes).map_err(E::from)?;
+                        self.files
+                            .version(STATE, state.schema_version)
+                            .map_err(E::from)?;
+                        self.validate_state(&state).map_err(E::from)?;
+                        state
+                    }
+                    None => State {
+                        schema_version: VERSION,
+                        generation: 0,
+                        files: before.fingerprints(),
+                        receipts: BTreeMap::new(),
+                    },
+                };
+                if let Some(receipt) = state.receipts.get(operation_key) {
+                    if receipt.request_digest != request_digest {
+                        return Err(E::from(RepositoryError::IdempotencyConflict {
+                            operation_key: operation_key.into(),
+                        }));
+                    }
+                    return Ok(receipt.clone());
+                }
+                if state.files != before.fingerprints() {
+                    state.advance().map_err(E::from)?;
+                    state.files = before.fingerprints();
+                }
+                let before_revision = state.revision();
+                let data = repair(
+                    before.issues.as_deref().unwrap_or_default(),
+                    before.archive.as_deref().unwrap_or_default(),
+                )?;
+                let after = self.encode(&data).map_err(E::from)?;
+                state.advance().map_err(E::from)?;
+                state.files = after.fingerprints();
+                let receipt = OperationReceipt {
+                    operation_key: operation_key.into(),
+                    request_digest: request_digest.into(),
+                    before_revision,
+                    after_revision: state.revision(),
+                    created_ids: BTreeMap::new(),
+                };
+                state.receipts.insert(operation_key.into(), receipt.clone());
+                self.publish(
+                    before.fingerprints(),
+                    fingerprint(stored.as_deref()),
+                    after,
+                    state,
+                )
+                .map_err(E::from)?;
+                Ok(receipt)
+            })())
+        })
+        .map_err(E::from)?
     }
 
     fn locked<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {

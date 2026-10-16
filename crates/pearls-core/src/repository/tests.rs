@@ -528,3 +528,84 @@ fn managed_symlinks_are_rejected() {
     assert!(store.snapshot().is_err());
     assert_eq!(fs::read(&target).unwrap(), b"do not touch");
 }
+
+#[test]
+fn maintenance_preserves_receipts_and_replays_before_running_callback() {
+    let (root, store, before) = setup();
+    let receipt = store
+        .transact(&request(&before, "original"), |_| -> Result<_> {
+            Ok(BTreeMap::new())
+        })
+        .unwrap();
+    fs::write(store.files.path(ISSUES), "not JSON\n").unwrap();
+    let repaired = store
+        .repair(
+            "repair",
+            "doctor:v1",
+            |active, _| -> Result<RepositoryData> {
+                assert_eq!(active, "not JSON\n");
+                Ok(before.data.clone())
+            },
+        )
+        .unwrap();
+    let reopened = RepositoryStore::open(root.path()).unwrap();
+    assert_eq!(reopened.receipt("original").unwrap(), Some(receipt));
+    assert_eq!(
+        reopened.snapshot().unwrap().revision,
+        repaired.after_revision
+    );
+    assert_eq!(
+        reopened
+            .repair("repair", "doctor:v1", |_, _| -> Result<RepositoryData> {
+                Err(RepositoryError::InvalidInput(
+                    "Replay must skip callback".into(),
+                ))
+            })
+            .unwrap(),
+        repaired
+    );
+    assert!(matches!(
+        reopened.repair("repair", "other", |_, _| Ok(before.data.clone())),
+        Err(RepositoryError::IdempotencyConflict { .. })
+    ));
+}
+
+#[test]
+fn maintenance_failure_boundaries_preserve_corrupt_input_or_complete_repair() {
+    for step in 1..=publication_steps() {
+        let (root, store, before) = setup();
+        fs::write(store.files.path(ISSUES), "not JSON\n").unwrap();
+        let archive_before = fs::read(store.files.path(ARCHIVE)).unwrap();
+        store.files.remaining_steps.set(Some(step));
+        let result = store.repair("repair", "test", |_, _| -> Result<RepositoryData> {
+            let mut data = before.data.clone();
+            proposal(&mut data)?;
+            Ok(data)
+        });
+        assert!(result.is_err(), "step {step}");
+        let reopened = RepositoryStore::open(root.path()).unwrap();
+        match reopened.snapshot() {
+            Ok(snapshot) => {
+                let receipt = reopened.receipt("repair").unwrap().unwrap();
+                assert_eq!(snapshot.revision, receipt.after_revision);
+                assert_eq!(snapshot.data.active[0].id, "prl-000003");
+                assert_eq!(snapshot.data.archived.len(), 2);
+            }
+            Err(RepositoryError::CorruptStorage { .. }) => {
+                assert_eq!(
+                    fs::read_to_string(reopened.files.path(ISSUES)).unwrap(),
+                    "not JSON\n"
+                );
+                assert_eq!(
+                    fs::read(reopened.files.path(ARCHIVE)).unwrap(),
+                    archive_before
+                );
+                let state: State =
+                    serde_json::from_slice(&fs::read(reopened.files.path(STATE)).unwrap()).unwrap();
+                assert!(!state.receipts.contains_key("repair"));
+            }
+            other => panic!("Unexpected recovery result: {other:?}"),
+        }
+        assert!(reopened.files.read(JOURNAL).unwrap().is_none());
+    }
+}

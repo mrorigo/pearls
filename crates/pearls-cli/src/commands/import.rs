@@ -6,7 +6,8 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
-use pearls_core::{Config, Pearl, Storage};
+use pearls_app::service::{GraphService, Mutation};
+use pearls_core::{Config, Pearl};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -97,8 +98,11 @@ pub fn import_beads(path: String) -> Result<()> {
         anyhow::bail!("No valid Pearls found in Beads file.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    storage.merge_all(&pearls)?;
+    GraphService::open(".")?.execute(|_| {
+        Ok(vec![Mutation::Import {
+            tasks: pearls.clone(),
+        }])
+    })?;
 
     if is_json_output() {
         println!(

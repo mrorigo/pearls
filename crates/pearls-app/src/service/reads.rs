@@ -148,14 +148,14 @@ pub(super) fn snapshot(
 }
 
 pub(super) fn schedule(
-    snapshot: RepositorySnapshot,
+    revision: GraphRevision,
     graph: &IssueGraph,
     selection: &TaskSelection,
 ) -> Result<ScheduleResult> {
     let mut tasks = required(graph, selection)?;
     tasks.sort_by(|left, right| order(left, right));
     let mut result = ScheduleResult {
-        revision: snapshot.revision,
+        revision,
         ready: Vec::new(),
         running: Vec::new(),
         blocked: Vec::new(),

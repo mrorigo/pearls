@@ -2,8 +2,7 @@
 
 //! Shared utilities for command implementations.
 
-use anyhow::Result;
-use pearls_core::Storage;
+use pearls_core::Pearl;
 use std::collections::{BTreeSet, HashSet};
 
 /// Suggests existing labels that aren't already in the provided list.
@@ -16,10 +15,9 @@ use std::collections::{BTreeSet, HashSet};
 /// # Returns
 ///
 /// Ok if successful, Err otherwise.
-pub fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
-    let existing = storage.load_all().unwrap_or_default();
+pub fn suggest_labels(existing: &[Pearl], labels: &[String]) {
     if existing.is_empty() {
-        return Ok(());
+        return;
     }
 
     // De-duplicate and sort existing labels
@@ -29,7 +27,7 @@ pub fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
         .collect();
 
     if existing_labels_set.is_empty() {
-        return Ok(());
+        return;
     }
 
     let existing_labels: Vec<String> = existing_labels_set.into_iter().collect();
@@ -52,6 +50,4 @@ pub fn suggest_labels(storage: &Storage, labels: &[String]) -> Result<()> {
             existing_labels.join(", ")
         );
     }
-
-    Ok(())
 }

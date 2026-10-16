@@ -1114,6 +1114,9 @@ impl Storage {
     /// Use this for operations that must coordinate multiple Pearls files, such
     /// as active issues plus archives. Single-file operations should use
     /// [`Storage::with_lock`].
+    ///
+    /// Waits up to 30 seconds for the repository lock. Recoverable multi-file
+    /// publications require more durable writes than single-file operations.
     pub fn with_repository_lock<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce() -> std::result::Result<T, E>,
@@ -1158,7 +1161,11 @@ impl Storage {
 
         // Try to acquire exclusive lock with timeout.
         // fs2 does not support timeouts directly, so we retry with backoff.
-        let timeout = Duration::from_secs(5);
+        let timeout = Duration::from_secs(if Self::is_repository_lock_path(&lock_path) {
+            30
+        } else {
+            5
+        });
         let start = Instant::now();
         loop {
             match lock_file.try_lock_exclusive() {

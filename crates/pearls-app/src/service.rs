@@ -10,10 +10,12 @@
 //! Unknown storage schemas fail closed. Receipts do not provide guarantees across
 //! externally reverted Git history. Receipt expiration is not implemented yet.
 
+mod adapters;
 mod mutations;
 mod reads;
 mod types;
 
+pub use adapters::{resolve_active_task, AppliedBatch};
 pub use pearls_core::repository::{GraphRevision, OperationReceipt, RepositorySnapshot};
 pub use reads::{BlockedTask, GraphSnapshot, ScheduleBlockReason, ScheduleResult, TaskSelection};
 pub use types::{
@@ -30,7 +32,7 @@ use std::path::{Path, PathBuf};
 /// Public application service bound to one explicitly initialized repository.
 ///
 /// Low-level storage writers must not run concurrently with service operations.
-/// CLI and MCP adapter migration is a separate implementation slice.
+/// CLI, MCP, and hooks use the same application mutations and repository lock.
 pub struct GraphService {
     store: RepositoryStore,
     pearls_dir: PathBuf,
@@ -83,7 +85,7 @@ impl GraphService {
     /// Returns `NotFound` for unknown IDs, or graph, identity, and storage failures.
     pub fn schedule(&self, selection: &TaskSelection) -> Result<ScheduleResult> {
         let (snapshot, graph) = self.validated_snapshot()?;
-        reads::schedule(snapshot, &graph, selection)
+        reads::schedule(snapshot.revision, &graph, selection)
     }
 
     fn validated_snapshot(&self) -> Result<(RepositorySnapshot, pearls_core::IssueGraph)> {
@@ -110,23 +112,14 @@ impl GraphService {
     /// Returns typed concurrency, identity, graph, transition, input, or storage
     /// failures. A rejected batch publishes neither task changes nor its receipt.
     pub fn apply(&self, request: &BatchRequest) -> Result<OperationReceipt> {
-        let digest_input = serde_json::json!({
-            "api_version": API_VERSION,
-            "expected_revision": request.expected_revision,
-            "mutations": request.mutations,
-        });
-        let digest = format!("{:x}", Sha256::digest(canonical_bytes(digest_input)?));
-        let operation = OperationRequest {
-            operation_key: request.operation_key.clone(),
-            request_digest: digest,
-            expected_revision: request.expected_revision.clone(),
-        };
+        let operation = operation_request(request)?;
         self.store.transact(&operation, |data| {
             if request.mutations.is_empty() {
                 return Err(AppError::InvalidInput("A batch requires mutations".into()));
             }
             let config = pearls_core::Config::load(&self.pearls_dir)?;
-            mutations::apply(data, &request.mutations, &config)
+            let created = mutations::apply(data, &request.mutations, &config)?;
+            Ok(created)
         })
     }
 }
@@ -146,4 +139,28 @@ fn canonical_bytes(value: Value) -> Result<Vec<u8>> {
         }
     }
     serde_json::to_vec(&sorted(value)).map_err(|error| AppError::Core(error.into()))
+}
+
+/// Computes scheduling facts from a previously captured consistent snapshot.
+///
+/// This lets adapters derive IDs and legacy response fields from the same read.
+/// The complete supplied graph is validated; no storage or process output occurs.
+///
+/// # Errors
+/// Returns graph, external identity, or unknown required-ID failures.
+pub fn schedule_snapshot(
+    snapshot: &RepositorySnapshot,
+    selection: &TaskSelection,
+) -> Result<ScheduleResult> {
+    let graph = mutations::validate(&snapshot.data)?;
+    reads::schedule(snapshot.revision.clone(), &graph, selection)
+}
+
+fn operation_request(request: &BatchRequest) -> Result<OperationRequest> {
+    let input = serde_json::json!({"api_version":API_VERSION,"expected_revision":request.expected_revision,"mutations":request.mutations});
+    Ok(OperationRequest {
+        operation_key: request.operation_key.clone(),
+        request_digest: format!("{:x}", Sha256::digest(canonical_bytes(input)?)),
+        expected_revision: request.expected_revision.clone(),
+    })
 }

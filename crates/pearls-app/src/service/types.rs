@@ -72,6 +72,11 @@ pub struct TaskPatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
+    /// Imports explicit JSONL records, preserving IDs and validating existing transitions.
+    Import {
+        /// Incoming tasks; later definitions of the same ID replace earlier ones.
+        tasks: Vec<pearls_core::Pearl>,
+    },
     /// Creates an Open task or resolves its identical original external definition.
     Create {
         /// Unique nonempty batch-local creation reference.

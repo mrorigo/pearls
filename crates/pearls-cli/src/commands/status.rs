@@ -9,7 +9,8 @@ use crate::output_mode::is_json_output;
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use git2::{BranchType, Repository};
-use pearls_core::{IssueGraph, Status, Storage};
+use pearls_app::service::GraphService;
+use pearls_core::{IssueGraph, Status};
 use std::path::Path;
 
 /// Executes the status command.
@@ -34,9 +35,15 @@ pub fn execute(detailed: bool) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let graph = IssueGraph::from_pearls(pearls.clone())?;
+    let snapshot = GraphService::open(".")?.snapshot()?;
+    let pearls = snapshot.data.active;
+    let graph = IssueGraph::from_pearls_strict(
+        pearls
+            .iter()
+            .cloned()
+            .chain(snapshot.data.archived)
+            .collect(),
+    )?;
 
     let git_status = collect_git_status()?;
     let p0_open = pearls

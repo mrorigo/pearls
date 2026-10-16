@@ -6,11 +6,11 @@
 //! generates a hash-based ID, and appends it to the JSONL file.
 
 use crate::output_mode::is_json_output;
-use anyhow::Result;
-use pearls_core::{Config, Pearl, Storage};
-use std::path::Path;
+use pearls_app::service::{GraphService, Mutation};
 
-const MAX_CREATE_ID_ATTEMPTS: u32 = 65_536;
+use anyhow::Result;
+use pearls_core::Config;
+use std::path::Path;
 
 /// Creates a new Pearl with the specified parameters.
 ///
@@ -55,46 +55,27 @@ pub fn execute(
 
     let config = Config::load(pearls_dir)?;
 
-    // Create new Pearl
-    let mut pearl = Pearl::new(title, author);
-
-    // Apply optional fields
     let mut provided_description = description;
-    if let Some(desc_path) = description_file {
-        provided_description = Some(read_description_from_path(&desc_path)?);
+    if let Some(path) = description_file {
+        provided_description = Some(read_description_from_path(&path)?);
     }
-
-    if let Some(desc) = provided_description {
-        enforce_description_limit(&desc)?;
-        pearl.description = desc;
-    }
-
-    if let Some(p) = priority {
-        if p > config.max_priority {
-            anyhow::bail!("Priority must be 0-{}, got {}", config.max_priority, p);
-        }
-        pearl.priority = p;
-    } else {
-        pearl.priority = config.default_priority;
-    }
-
-    if !labels.is_empty() {
-        pearl.labels = labels.clone();
-    }
-
-    // Validate Pearl
-    pearl.validate()?;
-
-    // Save to storage
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    if !labels.is_empty() {
-        super::utils::suggest_labels(&storage, &labels)?;
-    }
-    storage.create_new(
-        &mut pearl,
-        Some(&pearls_dir.join("archive.jsonl")),
-        MAX_CREATE_ID_ATTEMPTS,
-    )?;
+    let service = GraphService::open(".")?;
+    let result = service.execute(|snapshot| {
+        super::utils::suggest_labels(&snapshot.data.active, &labels);
+        Ok(vec![Mutation::Create {
+            local_ref: "task".into(),
+            task: pearls_app::service::CreateTask {
+                title,
+                author,
+                description: provided_description.unwrap_or_default(),
+                priority,
+                labels,
+                metadata: Default::default(),
+                external_key: None,
+            },
+        }])
+    })?;
+    let pearl = result.task(&result.receipt.created_ids["task"])?;
 
     if is_json_output() {
         println!(
@@ -156,12 +137,4 @@ fn read_description_from_path(path: &str) -> Result<String> {
     }
 
     Ok(std::fs::read_to_string(path)?)
-}
-
-fn enforce_description_limit(description: &str) -> Result<()> {
-    const MAX_BYTES: usize = 64 * 1024;
-    if description.len() > MAX_BYTES {
-        anyhow::bail!("Description exceeds 64KB limit");
-    }
-    Ok(())
 }

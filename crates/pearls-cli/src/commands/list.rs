@@ -7,6 +7,7 @@
 
 use crate::OutputFormatter;
 use anyhow::Result;
+use pearls_app::service::GraphService;
 use pearls_app::{list_pearls, parse_dep_type, parse_status, ListOptions, RepoContext};
 
 /// Lists Pearls with optional filtering and sorting.
@@ -47,21 +48,15 @@ pub fn execute(
 ) -> Result<()> {
     let repo = RepoContext::discover(None)?;
 
-    let storage = repo.open_storage()?;
-    let mut pearls = storage.load_all()?;
-
+    let snapshot = GraphService::open(repo.root())?.snapshot()?;
+    let mut pearls = snapshot.data.active;
     if include_archived {
-        if let Some(archive_storage) = repo.open_archive_storage()? {
-            if let Ok(archived) = archive_storage.load_all() {
-                let mut archived = archived;
-                for pearl in &mut archived {
-                    pearl
-                        .metadata
-                        .insert("archived".to_string(), serde_json::Value::Bool(true));
-                }
-                pearls.extend(archived);
-            }
+        let mut archived = snapshot.data.archived;
+        for task in &mut archived {
+            task.metadata
+                .insert("archived".into(), serde_json::Value::Bool(true));
         }
+        pearls.extend(archived);
     }
 
     let status_filter = match status_filter {
