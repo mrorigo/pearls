@@ -10,9 +10,12 @@ use crate::types::{
     ShowResult, StatusCount, TransitionSafeInput, TransitionSafeResult, UnlinkInput, UnlinkItem,
     UnlinkResult, UpdateInput, UpdateResult,
 };
+use pearls_app::service::{
+    resolve_active_task, CreateTask, GraphService, Mutation, TaskPatch, TaskRef,
+};
 use pearls_app::{
-    list_pearls, parse_dep_type, parse_status, ready_queue, resolve_pearl_id, unix_timestamp,
-    validate_transition, AppError, ErrorEnvelope, ListOptions, RepoContext, SuccessEnvelope,
+    list_pearls, parse_dep_type, parse_status, resolve_pearl_id, AppError, ErrorEnvelope,
+    ListOptions, RepoContext, SuccessEnvelope,
 };
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{
@@ -32,7 +35,6 @@ use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt;
 
-const MAX_CREATE_ID_ATTEMPTS: u32 = 65_536;
 const MAX_MCP_CREATE_BATCH_SIZE: usize = 100;
 
 /// Runtime options for the MCP server.
@@ -163,8 +165,8 @@ impl PearlsMcp {
 
     fn ready_resource(&self) -> Result<ReadyResource, AppError> {
         let repo = self.repo_context()?;
-        let storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
+        let snapshot = GraphService::open(repo.root())?.snapshot()?;
+        let pearls = &snapshot.data.active;
         if pearls.is_empty() {
             return Ok(ReadyResource {
                 ready: Vec::new(),
@@ -174,7 +176,13 @@ impl PearlsMcp {
             });
         }
 
-        let ready = ready_queue(pearls)?;
+        let ready = pearls_app::service::schedule_snapshot(
+            &snapshot,
+            &pearls_app::service::TaskSelection {
+                required_ids: pearls.iter().map(|task| task.id.clone()).collect(),
+            },
+        )?
+        .ready;
         if ready.is_empty() {
             return Ok(ReadyResource {
                 ready: Vec::new(),
@@ -193,26 +201,18 @@ impl PearlsMcp {
         })
     }
 
-    fn load_active_pearls(&self) -> Result<Vec<pearls_core::Pearl>, AppError> {
-        let repo = self.repo_context()?;
-        let storage = repo.open_storage()?;
-        Ok(storage.load_all()?)
-    }
-
     fn load_all_pearls(&self, include_archived: bool) -> Result<Vec<pearls_core::Pearl>, AppError> {
         let repo = self.repo_context()?;
-        let storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
+        let snapshot = GraphService::open(repo.root())?.snapshot()?;
+        let mut pearls = snapshot.data.active;
         if include_archived {
-            if let Some(archive_storage) = repo.open_archive_storage()? {
-                let mut archived = archive_storage.load_all()?;
-                for pearl in &mut archived {
-                    pearl
-                        .metadata
-                        .insert("archived".to_string(), serde_json::Value::Bool(true));
-                }
-                pearls.extend(archived);
+            let mut archived = snapshot.data.archived;
+            for pearl in &mut archived {
+                pearl
+                    .metadata
+                    .insert("archived".into(), serde_json::Value::Bool(true));
             }
+            pearls.extend(archived);
         }
         Ok(pearls)
     }
@@ -237,53 +237,38 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let config = repo.load_config()?;
-        let mut created = Vec::new();
-
-        for item in input.items {
-            if item.title.trim().is_empty() {
-                return Err(AppError::InvalidInput("Title cannot be empty".to_string()));
-            }
-
-            let author = item
-                .author
-                .or_else(default_author)
-                .unwrap_or_else(|| "unknown".to_string());
-            let mut pearl = pearls_core::Pearl::new(item.title, author);
-
-            if let Some(description) = item.description {
-                enforce_description_limit(&description)?;
-                pearl.description = description;
-            }
-
-            if let Some(priority) = item.priority {
-                if priority > config.max_priority {
-                    return Err(AppError::InvalidInput(format!(
-                        "Priority must be 0-{}, got {}",
-                        config.max_priority, priority
-                    )));
-                }
-                pearl.priority = priority;
-            } else {
-                pearl.priority = config.default_priority;
-            }
-
-            if let Some(labels) = item.labels {
-                pearl.labels = labels;
-            }
-
-            pearl.validate()?;
-            created.push(pearl);
-        }
-
-        let mut storage = repo.open_storage()?;
-        storage.create_many(
-            &mut created,
-            Some(repo.archive_path()),
-            MAX_CREATE_ID_ATTEMPTS,
-        )?;
-
-        Ok(CreateResult { pearls: created })
+        let count = input.items.len();
+        let result = GraphService::open(repo.root())?.execute(|_| {
+            input
+                .items
+                .into_iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    if item.title.trim().is_empty() {
+                        return Err(AppError::InvalidInput("Title cannot be empty".into()));
+                    }
+                    Ok(Mutation::Create {
+                        local_ref: index.to_string(),
+                        task: CreateTask {
+                            title: item.title,
+                            author: item
+                                .author
+                                .or_else(default_author)
+                                .unwrap_or_else(|| "unknown".into()),
+                            description: item.description.unwrap_or_default(),
+                            priority: item.priority,
+                            labels: item.labels.unwrap_or_default(),
+                            metadata: Default::default(),
+                            external_key: None,
+                        },
+                    })
+                })
+                .collect()
+        })?;
+        let pearls = (0..count)
+            .map(|index| result.task(&result.receipt.created_ids[&index.to_string()]))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(CreateResult { pearls })
     }
 
     fn show_tool(&self, input: ShowInput) -> Result<ShowResult, AppError> {
@@ -304,59 +289,39 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let config = repo.load_config()?;
-        let mut storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let position = pearls
-            .iter()
-            .position(|pearl| pearl.id == full_id)
-            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
-        let mut pearl = pearls[position].clone();
-
-        if let Some(title) = input.title {
-            pearl.title = title;
-        }
-        if let Some(description) = input.description {
-            enforce_description_limit(&description)?;
-            pearl.description = description;
-        }
-        if let Some(priority) = input.priority {
-            if priority > config.max_priority {
-                return Err(AppError::InvalidInput(format!(
-                    "Priority must be 0-{}, got {}",
-                    config.max_priority, priority
-                )));
-            }
-            pearl.priority = priority;
-        }
-        if let Some(status) = input.status {
-            let new_status = parse_status(&status)?;
-            let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-            validate_transition(&pearl, new_status, &graph)?;
-            pearl.status = new_status;
-        }
-
-        if let Some(add_labels) = input.add_labels {
-            for label in add_labels {
-                if !pearl.labels.contains(&label) {
-                    pearl.labels.push(label);
+        let status = input.status.as_deref().map(parse_status).transpose()?;
+        let mut full_id = String::new();
+        let result = GraphService::open(repo.root())?.execute(|snapshot| {
+            let pearl = resolve_active_task(&snapshot.data, &input.id)?;
+            full_id = pearl.id.clone();
+            let mut labels = pearl.labels.clone();
+            for label in input.add_labels.unwrap_or_default() {
+                if !labels.contains(&label) {
+                    labels.push(label);
                 }
             }
-        }
-        if let Some(remove_labels) = input.remove_labels {
-            for label in remove_labels {
-                pearl.labels.retain(|existing| existing != &label);
+            let removed = input.remove_labels.unwrap_or_default();
+            labels.retain(|label| !removed.contains(label));
+            let mut mutations = vec![Mutation::Update {
+                task: TaskRef::Id(full_id.clone()),
+                patch: TaskPatch {
+                    title: input.title,
+                    description: input.description,
+                    priority: input.priority,
+                    labels: Some(labels),
+                },
+            }];
+            if let Some(status) = status {
+                mutations.push(Mutation::SetStatus {
+                    task: TaskRef::Id(full_id.clone()),
+                    status,
+                });
             }
-        }
-
-        pearl.updated_at = unix_timestamp()?;
-        pearl.validate()?;
-
-        pearls[position] = pearl.clone();
-        storage.save(&pearl)?;
-
-        Ok(UpdateResult { pearl })
+            Ok(mutations)
+        })?;
+        Ok(UpdateResult {
+            pearl: result.task(&full_id)?,
+        })
     }
 
     fn close_tool(&self, input: CloseInput) -> Result<CloseResult, AppError> {
@@ -367,29 +332,22 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let position = pearls
-            .iter()
-            .position(|pearl| pearl.id == full_id)
-            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
-        let mut pearl = pearls[position].clone();
-
-        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        validate_transition(&pearl, pearls_core::Status::Closed, &graph)?;
-        pearl.status = pearls_core::Status::Closed;
-        pearl.updated_at = unix_timestamp()?;
-        pearl.validate()?;
-
-        pearls[position] = pearl.clone();
-        storage.save(&pearl)?;
-
-        Ok(CloseResult { pearl })
+        let mut full_id = String::new();
+        let result = GraphService::open(repo.root())?.execute(|snapshot| {
+            full_id = resolve_active_task(&snapshot.data, &input.id)?.id.clone();
+            Ok(vec![Mutation::SetStatus {
+                task: TaskRef::Id(full_id.clone()),
+                status: pearls_core::Status::Closed,
+            }])
+        })?;
+        Ok(CloseResult {
+            pearl: result.task(&full_id)?,
+        })
     }
 
     fn ready_tool(&self, input: ReadyInput) -> Result<ReadyResource, AppError> {
-        let pearls = self.load_active_pearls()?;
+        let snapshot = GraphService::open(self.repo_context()?.root())?.snapshot()?;
+        let pearls = &snapshot.data.active;
         if pearls.is_empty() {
             return Ok(ReadyResource {
                 ready: Vec::new(),
@@ -399,7 +357,13 @@ impl PearlsMcp {
             });
         }
 
-        let ready = ready_queue(pearls)?;
+        let ready = pearls_app::service::schedule_snapshot(
+            &snapshot,
+            &pearls_app::service::TaskSelection {
+                required_ids: pearls.iter().map(|task| task.id.clone()).collect(),
+            },
+        )?
+        .ready;
         let total = ready.len();
         if total == 0 {
             return Ok(ReadyResource {
@@ -430,36 +394,38 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let mut pearl = storage.load_by_id(&full_id)?;
-
-        let author = input
-            .author
-            .or_else(default_author)
-            .unwrap_or_else(|| "unknown".to_string());
+        let mut full_id = String::new();
+        let result = GraphService::open(repo.root())?.execute(|snapshot| {
+            full_id = resolve_active_task(&snapshot.data, &input.id)?.id.clone();
+            Ok(vec![Mutation::AddComment {
+                task: TaskRef::Id(full_id.clone()),
+                author: input
+                    .author
+                    .or_else(default_author)
+                    .unwrap_or_else(|| "unknown".into()),
+                body: input.body,
+            }])
+        })?;
+        let pearl = result.task(&full_id)?;
         let comment_id = pearl
-            .add_comment(author, input.body)
-            .map_err(AppError::from)?;
-        pearl.validate()?;
-        storage.save(&pearl)?;
-
+            .comments
+            .last()
+            .ok_or_else(|| AppError::InvalidInput("Added comment is missing".into()))?
+            .id
+            .clone();
         Ok(CommentsAddResult {
-            id: pearl.id,
+            id: full_id,
             comment_id,
         })
     }
 
     fn comments_list_tool(&self, input: CommentsListInput) -> Result<CommentsListResult, AppError> {
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let pearl = storage.load_by_id(&full_id)?;
+        let snapshot = GraphService::open(repo.root())?.snapshot()?;
+        let pearl = resolve_active_task(&snapshot.data, &input.id)?;
 
         Ok(CommentsListResult {
-            id: pearl.id,
+            id: pearl.id.clone(),
             comments: pearl.comments.clone(),
             total: pearl.comments.len(),
         })
@@ -476,24 +442,20 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let mut pearl = storage.load_by_id(&full_id)?;
-
-        let resolved_comment_id = resolve_comment_id(&input.comment_id, &pearl.comments)?;
-        if !pearl.delete_comment(&resolved_comment_id) {
-            return Err(AppError::InvalidInput(format!(
-                "Comment '{}' not found for Pearl {}",
-                resolved_comment_id, pearl.id
-            )));
-        }
-        pearl.validate()?;
-        storage.save(&pearl)?;
-
+        let mut full_id = String::new();
+        let mut comment_id = String::new();
+        GraphService::open(repo.root())?.execute(|snapshot| {
+            let pearl = resolve_active_task(&snapshot.data, &input.id)?;
+            full_id = pearl.id.clone();
+            comment_id = resolve_comment_id(&input.comment_id, &pearl.comments)?;
+            Ok(vec![Mutation::DeleteComment {
+                task: TaskRef::Id(full_id.clone()),
+                comment_id: comment_id.clone(),
+            }])
+        })?;
         Ok(CommentsDeleteResult {
-            id: pearl.id,
-            comment_id: resolved_comment_id,
+            id: full_id,
+            comment_id,
         })
     }
 
@@ -511,45 +473,26 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
         let mut resolved = Vec::new();
-
-        for link in input.links {
-            let dep_type = parse_dep_type(&link.dep_type)?;
-            let from_id = resolve_pearl_id(&link.from, &pearls)?;
-            let to_id = resolve_pearl_id(&link.to, &pearls)?;
-
-            let from_index = pearls
-                .iter()
-                .position(|pearl| pearl.id == from_id)
-                .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
-
-            let mut updated = pearls[from_index].clone();
-            if !updated
-                .deps
-                .iter()
-                .any(|dep| dep.target_id == to_id && dep.dep_type == dep_type)
-            {
-                updated.deps.push(pearls_core::Dependency {
-                    target_id: to_id.clone(),
+        GraphService::open(repo.root())?.execute(|snapshot| {
+            let mut mutations = Vec::new();
+            for link in input.links {
+                let dep_type = parse_dep_type(&link.dep_type)?;
+                let from = resolve_active_task(&snapshot.data, &link.from)?.id.clone();
+                let to = resolve_active_task(&snapshot.data, &link.to)?.id.clone();
+                mutations.push(Mutation::Link {
+                    from: TaskRef::Id(from.clone()),
+                    to: TaskRef::Id(to.clone()),
                     dep_type,
                 });
+                resolved.push(LinkItem {
+                    from,
+                    to,
+                    dep_type: link.dep_type,
+                });
             }
-
-            pearls[from_index] = updated.clone();
-            resolved.push(LinkItem {
-                from: from_id,
-                to: to_id,
-                dep_type: link.dep_type,
-            });
-        }
-
-        pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        for pearl in &pearls {
-            storage.save(pearl)?;
-        }
-
+            Ok(mutations)
+        })?;
         Ok(LinkResult { links: resolved })
     }
 
@@ -567,37 +510,26 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
         let mut resolved = Vec::new();
-        let mut removed = 0usize;
-
-        for link in input.links {
-            let from_id = resolve_pearl_id(&link.from, &pearls)?;
-            let to_id = resolve_pearl_id(&link.to, &pearls)?;
-
-            let from_index = pearls
-                .iter()
-                .position(|pearl| pearl.id == from_id)
-                .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(from_id.clone())))?;
-
-            let mut updated = pearls[from_index].clone();
-            let before = updated.deps.len();
-            updated.deps.retain(|dep| dep.target_id != to_id);
-            removed += before.saturating_sub(updated.deps.len());
-            pearls[from_index] = updated.clone();
-
-            resolved.push(UnlinkItem {
-                from: from_id,
-                to: to_id,
-            });
-        }
-
-        pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        for pearl in &pearls {
-            storage.save(pearl)?;
-        }
-
+        let mut removed = 0;
+        GraphService::open(repo.root())?.execute(|snapshot| {
+            let mut mutations = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for link in input.links {
+                let source = resolve_active_task(&snapshot.data, &link.from)?;
+                let from = source.id.clone();
+                let to = resolve_active_task(&snapshot.data, &link.to)?.id.clone();
+                if seen.insert((from.clone(), to.clone())) {
+                    removed += source.deps.iter().filter(|dep| dep.target_id == to).count();
+                }
+                mutations.push(Mutation::Unlink {
+                    from: TaskRef::Id(from.clone()),
+                    to: TaskRef::Id(to.clone()),
+                });
+                resolved.push(UnlinkItem { from, to });
+            }
+            Ok(mutations)
+        })?;
         Ok(UnlinkResult {
             links: resolved,
             removed,
@@ -637,8 +569,14 @@ impl PearlsMcp {
 
     fn next_action_tool(&self) -> Result<NextActionResult, AppError> {
         let repo = self.repo_context()?;
-        let storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
+        let snapshot = GraphService::open(repo.root())?.snapshot()?;
+        let pearls = &snapshot.data.active;
+        let scheduling = pearls_app::service::schedule_snapshot(
+            &snapshot,
+            &pearls_app::service::TaskSelection {
+                required_ids: pearls.iter().map(|task| task.id.clone()).collect(),
+            },
+        )?;
         if pearls.is_empty() {
             return Ok(NextActionResult {
                 pearl: None,
@@ -647,59 +585,40 @@ impl PearlsMcp {
             });
         }
 
-        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-        let ready = graph.ready_queue();
-        if let Some(pearl) = ready.first() {
+        if let Some(pearl) = scheduling.ready.first() {
             return Ok(NextActionResult {
-                pearl: Some((*pearl).clone()),
+                pearl: Some(pearl.clone()),
                 blockers: Vec::new(),
                 message: None,
             });
         }
-
-        let mut blocked: Vec<&pearls_core::Pearl> = pearls
-            .iter()
-            .filter(|pearl| {
-                pearl.status != pearls_core::Status::Closed
-                    && pearl.status != pearls_core::Status::Deferred
-                    && graph.is_blocked(&pearl.id)
-            })
-            .collect();
-
-        blocked.sort_by(|a, b| match a.priority.cmp(&b.priority) {
-            std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
-            other => other,
-        });
-
-        if let Some(pearl) = blocked.first() {
-            let blockers = graph
-                .blocking_deps(&pearl.id)
-                .into_iter()
-                .cloned()
-                .collect();
+        if let Some(blocked) = scheduling.blocked.first() {
             return Ok(NextActionResult {
-                pearl: Some((*pearl).clone()),
-                blockers,
-                message: Some("No ready Pearls; showing top blocked item".to_string()),
+                pearl: Some(blocked.task.clone()),
+                blockers: blocker_pearls(&snapshot.data, &blocked.blockers),
+                message: Some("No ready Pearls; showing top blocked item".into()),
             });
         }
-
         Ok(NextActionResult {
             pearl: None,
             blockers: Vec::new(),
-            message: Some("No actionable Pearls found".to_string()),
+            message: Some("No actionable Pearls found".into()),
         })
     }
 
     fn plan_snapshot_tool(&self, input: PlanSnapshotInput) -> Result<PlanSnapshotResult, AppError> {
         let limit = input.limit.unwrap_or(5);
         let repo = self.repo_context()?;
-        let storage = repo.open_storage()?;
-        let pearls = storage.load_all()?;
-        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-
+        let snapshot = GraphService::open(repo.root())?.snapshot()?;
+        let pearls = &snapshot.data.active;
+        let scheduling = pearls_app::service::schedule_snapshot(
+            &snapshot,
+            &pearls_app::service::TaskSelection {
+                required_ids: pearls.iter().map(|task| task.id.clone()).collect(),
+            },
+        )?;
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for pearl in &pearls {
+        for pearl in pearls {
             let key = status_key(pearl.status);
             *counts.entry(key).or_insert(0) += 1;
         }
@@ -710,36 +629,15 @@ impl PearlsMcp {
             .collect();
         counts_by_status.sort_by(|a, b| a.status.cmp(&b.status));
 
-        let top_ready: Vec<pearls_core::Pearl> = graph
-            .ready_queue()
+        let top_ready: Vec<pearls_core::Pearl> = scheduling.ready.into_iter().take(limit).collect();
+
+        let blocked_chains = scheduling
+            .blocked
             .into_iter()
             .take(limit)
-            .cloned()
-            .collect();
-
-        let mut blocked: Vec<&pearls_core::Pearl> = pearls
-            .iter()
-            .filter(|pearl| {
-                pearl.status != pearls_core::Status::Closed
-                    && pearl.status != pearls_core::Status::Deferred
-                    && graph.is_blocked(&pearl.id)
-            })
-            .collect();
-        blocked.sort_by(|a, b| match a.priority.cmp(&b.priority) {
-            std::cmp::Ordering::Equal => b.updated_at.cmp(&a.updated_at),
-            other => other,
-        });
-
-        let blocked_chains = blocked
-            .into_iter()
-            .take(limit)
-            .map(|pearl| BlockedChain {
-                pearl: pearl.clone(),
-                blockers: graph
-                    .blocking_deps(&pearl.id)
-                    .into_iter()
-                    .cloned()
-                    .collect(),
+            .map(|blocked| BlockedChain {
+                blockers: blocker_pearls(&snapshot.data, &blocked.blockers),
+                pearl: blocked.task,
             })
             .collect();
 
@@ -761,45 +659,49 @@ impl PearlsMcp {
         }
 
         let repo = self.repo_context()?;
-        let mut storage = repo.open_storage()?;
-        let mut pearls = storage.load_all()?;
-        let full_id = resolve_pearl_id(&input.id, &pearls)?;
-        let position = pearls
-            .iter()
-            .position(|pearl| pearl.id == full_id)
-            .ok_or_else(|| AppError::Core(pearls_core::Error::NotFound(full_id.clone())))?;
-        let mut pearl = pearls[position].clone();
-
-        let new_status = parse_status(&input.status)?;
-        let graph = pearls_core::IssueGraph::from_pearls(pearls.clone())?;
-
-        if let Err(error) = validate_transition(&pearl, new_status, &graph) {
-            let blockers = graph
-                .blocking_deps(&pearl.id)
-                .into_iter()
-                .cloned()
-                .collect();
-            return Ok(TransitionSafeResult {
-                transitioned: false,
-                pearl: Some(pearl),
-                blockers,
-                message: error.to_string(),
-            });
+        let status = parse_status(&input.status)?;
+        let mut before = None;
+        let mut full_id = String::new();
+        let result = GraphService::open(repo.root())?.execute(|snapshot| {
+            let pearl = resolve_active_task(&snapshot.data, &input.id)?.clone();
+            full_id = pearl.id.clone();
+            before = Some((pearl, snapshot.data.clone()));
+            Ok(vec![Mutation::SetStatus {
+                task: TaskRef::Id(full_id.clone()),
+                status,
+            }])
+        });
+        match result {
+            Ok(result) => Ok(TransitionSafeResult {
+                transitioned: true,
+                pearl: Some(result.task(&full_id)?),
+                blockers: Vec::new(),
+                message: "Transition applied".into(),
+            }),
+            Err(error) if error.code() == pearls_app::ErrorCode::InvalidTransition => {
+                let (pearl, data) = before
+                    .ok_or_else(|| AppError::InvalidInput("Missing transition context".into()))?;
+                let blockers = data
+                    .active
+                    .into_iter()
+                    .chain(data.archived)
+                    .filter(|task| {
+                        task.status != pearls_core::Status::Closed
+                            && pearl.deps.iter().any(|dep| {
+                                dep.dep_type == pearls_core::DepType::Blocks
+                                    && dep.target_id == task.id
+                            })
+                    })
+                    .collect();
+                Ok(TransitionSafeResult {
+                    transitioned: false,
+                    pearl: Some(pearl),
+                    blockers,
+                    message: error.to_string(),
+                })
+            }
+            Err(error) => Err(error),
         }
-
-        pearl.status = new_status;
-        pearl.updated_at = unix_timestamp()?;
-        pearl.validate()?;
-
-        pearls[position] = pearl.clone();
-        storage.save(&pearl)?;
-
-        Ok(TransitionSafeResult {
-            transitioned: true,
-            pearl: Some(pearl),
-            blockers: Vec::new(),
-            message: "Transition applied".to_string(),
-        })
     }
 }
 
@@ -1053,6 +955,11 @@ fn map_app_error(error: AppError) -> ErrorData {
         pearls_app::ErrorCode::AmbiguousId
         | pearls_app::ErrorCode::InvalidTransition
         | pearls_app::ErrorCode::ValidationError
+        | pearls_app::ErrorCode::RevisionConflict
+        | pearls_app::ErrorCode::OperationExpired
+        | pearls_app::ErrorCode::IdempotencyConflict
+        | pearls_app::ErrorCode::ExternalKeyConflict
+        | pearls_app::ErrorCode::InvalidGraph
         | pearls_app::ErrorCode::InvalidInput
         | pearls_app::ErrorCode::RepoNotInitialized => {
             ErrorData::invalid_params(envelope.message, data)
@@ -1060,6 +967,8 @@ fn map_app_error(error: AppError) -> ErrorData {
         pearls_app::ErrorCode::IoError
         | pearls_app::ErrorCode::GitError
         | pearls_app::ErrorCode::JsonError
+        | pearls_app::ErrorCode::LockTimeout
+        | pearls_app::ErrorCode::CorruptStorage
         | pearls_app::ErrorCode::Unknown => ErrorData::internal_error(envelope.message, data),
     }
 }
@@ -1075,20 +984,26 @@ fn status_key(status: pearls_core::Status) -> String {
     .to_string()
 }
 
+fn blocker_pearls(
+    data: &pearls_core::repository::RepositoryData,
+    blockers: &[pearls_core::TransitionBlocker],
+) -> Vec<pearls_core::Pearl> {
+    blockers
+        .iter()
+        .filter_map(|blocker| {
+            data.active
+                .iter()
+                .chain(&data.archived)
+                .find(|task| task.id == blocker.id)
+        })
+        .cloned()
+        .collect()
+}
+
 fn default_author() -> Option<String> {
     std::env::var("USER")
         .ok()
         .or_else(|| std::env::var("USERNAME").ok())
-}
-
-fn enforce_description_limit(description: &str) -> Result<(), AppError> {
-    const MAX_BYTES: usize = 64 * 1024;
-    if description.len() > MAX_BYTES {
-        return Err(AppError::InvalidInput(
-            "Description exceeds 64KB limit".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn resolve_comment_id(
@@ -1706,5 +1621,85 @@ mod tests {
             .expect("ready resource failed");
         let text = extract_text(ready);
         assert!(text.contains("No Pearls found"));
+    }
+
+    #[test]
+    fn mcp_cycle_batch_does_not_change_tasks_revision_or_receipts() {
+        let root = init_repo();
+        let server = server_for(&root);
+        let service = GraphService::open(root.path()).unwrap();
+        let mut a = pearls_core::Pearl::new("A".into(), "tester".into());
+        a.id = "prl-000001".into();
+        let mut b = pearls_core::Pearl::new("B".into(), "tester".into());
+        b.id = "prl-000002".into();
+        service
+            .execute(|_| Ok(vec![Mutation::Import { tasks: vec![a, b] }]))
+            .unwrap();
+        let before = service.snapshot().unwrap();
+        let state_path = root.path().join(".pearls/transaction-state.json");
+        let state_before = fs::read(&state_path).unwrap();
+        let error = server
+            .link_tool(LinkInput {
+                links: vec![
+                    LinkItem {
+                        from: "prl-000001".into(),
+                        to: "prl-000002".into(),
+                        dep_type: "blocks".into(),
+                    },
+                    LinkItem {
+                        from: "prl-000002".into(),
+                        to: "prl-000001".into(),
+                        dep_type: "blocks".into(),
+                    },
+                ],
+            })
+            .unwrap_err();
+        assert_eq!(error.code(), pearls_app::ErrorCode::InvalidGraph);
+        assert_eq!(service.snapshot().unwrap(), before);
+        assert_eq!(fs::read(state_path).unwrap(), state_before);
+    }
+
+    #[test]
+    fn mcp_transitions_use_archived_endpoints_and_share_service_revisions() {
+        let root = init_repo();
+        let server = server_for(&root);
+        let service = GraphService::open(root.path()).unwrap();
+        let mut a = pearls_core::Pearl::new("A".into(), "tester".into());
+        a.id = "prl-000001".into();
+        a.deps.push(pearls_core::Dependency {
+            target_id: "prl-000002".into(),
+            dep_type: pearls_core::DepType::Blocks,
+        });
+        let mut b = pearls_core::Pearl::new("B".into(), "tester".into());
+        b.id = "prl-000002".into();
+        service
+            .execute(|_| Ok(vec![Mutation::Import { tasks: vec![a, b] }]))
+            .unwrap();
+        let before = service.snapshot().unwrap();
+        let denial = server
+            .transition_safe_tool(TransitionSafeInput {
+                id: "prl-000001".into(),
+                status: "closed".into(),
+            })
+            .unwrap();
+        assert!(!denial.transitioned);
+        assert_eq!(denial.blockers[0].id, "prl-000002");
+        assert_eq!(service.snapshot().unwrap(), before);
+        server
+            .close_tool(CloseInput {
+                id: "prl-000002".into(),
+            })
+            .unwrap();
+        let closed = service.snapshot().unwrap();
+        assert_ne!(closed.revision, before.revision);
+        service.compact(i64::MAX).unwrap();
+        server
+            .close_tool(CloseInput {
+                id: "prl-000001".into(),
+            })
+            .unwrap();
+        let current = service.snapshot().unwrap();
+        assert_eq!(current.data.active[0].status, Status::Closed);
+        assert_eq!(current.data.archived[0].id, "prl-000002");
     }
 }

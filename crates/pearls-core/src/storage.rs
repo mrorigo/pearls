@@ -18,7 +18,7 @@ const INDEX_VERSION: u8 = 1;
 const MAX_INDEX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_INDEX_ENTRIES: u64 = 1_000_000;
 const MAX_INDEX_ID_BYTES: usize = 256;
-const MAX_JSONL_LINE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_JSONL_LINE_BYTES: usize = 16 * 1024 * 1024;
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 thread_local! {
     static REENTRANT_LOCK_DEPTHS: RefCell<HashMap<PathBuf, usize>> = RefCell::new(HashMap::new());
@@ -150,11 +150,12 @@ fn unique_temp_path(path: &Path, marker: &str) -> PathBuf {
 /// On macOS, `File::sync_all()` issues `fcntl(F_FULLFSYNC)`; when that is
 /// unsupported we fall back to plain `fsync`, which those filesystems do
 /// support. On other platforms this is just `File::sync_all()`.
-fn sync_file(file: &std::fs::File) -> Result<()> {
+pub(crate) fn sync_file(file: &std::fs::File) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
+        // SAFETY: The borrowed File keeps fd valid for this descriptor-only call.
         let ret = unsafe { libc::fcntl(fd, libc::F_FULLFSYNC) };
         if ret == 0 {
             return Ok(());
@@ -164,6 +165,7 @@ fn sync_file(file: &std::fs::File) -> Result<()> {
             err.raw_os_error(),
             Some(libc::EOPNOTSUPP) | Some(libc::ENOTSUP) | Some(libc::EINVAL)
         ) {
+            // SAFETY: fd still belongs to the live borrowed File.
             let ret = unsafe { libc::fsync(fd) };
             if ret == 0 {
                 return Ok(());
@@ -179,7 +181,7 @@ fn sync_file(file: &std::fs::File) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
+pub(crate) fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
 
     OpenOptions::new()
@@ -215,11 +217,11 @@ fn open_lock_no_follow(path: &Path) -> Result<std::fs::File> {
 }
 
 #[cfg(not(unix))]
-fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
+pub(crate) fn open_existing_no_follow(path: &Path) -> Result<std::fs::File> {
     std::fs::File::open(path).map_err(Error::Io)
 }
 
-fn reject_managed_path_symlinks(path: &Path, label: &str) -> Result<()> {
+pub(crate) fn reject_managed_path_symlinks(path: &Path, label: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         match std::fs::symlink_metadata(parent) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -1112,6 +1114,9 @@ impl Storage {
     /// Use this for operations that must coordinate multiple Pearls files, such
     /// as active issues plus archives. Single-file operations should use
     /// [`Storage::with_lock`].
+    ///
+    /// Waits up to 30 seconds for the repository lock. Recoverable multi-file
+    /// publications require more durable writes than single-file operations.
     pub fn with_repository_lock<F, T, E>(&self, f: F) -> std::result::Result<T, E>
     where
         F: FnOnce() -> std::result::Result<T, E>,
@@ -1156,7 +1161,11 @@ impl Storage {
 
         // Try to acquire exclusive lock with timeout.
         // fs2 does not support timeouts directly, so we retry with backoff.
-        let timeout = Duration::from_secs(5);
+        let timeout = Duration::from_secs(if Self::is_repository_lock_path(&lock_path) {
+            30
+        } else {
+            5
+        });
         let start = Instant::now();
         loop {
             match lock_file.try_lock_exclusive() {

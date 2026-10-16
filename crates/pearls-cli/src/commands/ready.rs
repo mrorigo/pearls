@@ -7,7 +7,8 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
-use pearls_app::{ready_queue, RepoContext};
+use pearls_app::service::{GraphService, TaskSelection};
+use pearls_app::RepoContext;
 
 /// Displays the ready queue of unblocked Pearls.
 ///
@@ -27,8 +28,9 @@ use pearls_app::{ready_queue, RepoContext};
 /// - The dependency graph contains cycles
 pub fn execute(limit: Option<usize>) -> Result<()> {
     let repo = RepoContext::discover(None)?;
-    let storage = repo.open_storage()?;
-    let pearls = storage.load_all()?;
+    let service = GraphService::open(repo.root())?;
+    let snapshot = service.snapshot()?;
+    let pearls = &snapshot.data.active;
 
     if pearls.is_empty() {
         if is_json_output() {
@@ -46,7 +48,13 @@ pub fn execute(limit: Option<usize>) -> Result<()> {
         return Ok(());
     }
 
-    let ready = ready_queue(pearls)?;
+    let ready = pearls_app::service::schedule_snapshot(
+        &snapshot,
+        &TaskSelection {
+            required_ids: pearls.iter().map(|task| task.id.clone()).collect(),
+        },
+    )?
+    .ready;
 
     if ready.is_empty() {
         if is_json_output() {

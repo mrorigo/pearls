@@ -14,6 +14,7 @@ pub mod list;
 pub mod ready;
 pub mod repo;
 pub mod response;
+pub mod service;
 pub mod time;
 
 pub use compact::compact_closed;

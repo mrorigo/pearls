@@ -6,9 +6,15 @@ Git-native issue tracking for the age of agentic development.
 
 Pearls is a fast, local-first issue tracker that lives in your repo, speaks in structured data, and behaves like a serious engineering tool. No cloud lock-in. No daemon circus. No mystery state.
 
+## v0.4.0 upgrade note
+
+This release adds recoverable atomic task updates and an embeddable Rust graph service. It also changes `prl ready` to show only unblocked Open tasks and makes the post-merge hook reject missing dependency endpoints. See the [changelog](CHANGELOG.md) for the full list.
+
+Back up the complete `.pearls` directory before upgrading, and do not run older Pearls writers alongside v0.4.0. Repositories from v0.3.8 without transaction metadata are initialized automatically on the first v0.4.0 read; task files are preserved. If a repository reports schema version 1 transaction metadata, run `prl init` to upgrade it, or `prl doctor --fix` if its task data also needs repair. See the [upgrade and rollback guide](docs/GRAPH-SERVICE.md#upgrade-and-rollback) for recovery details.
+
 ## Why Pearls
 
-- `Local-first`: issue state lives with your code in `.pearls/issues.jsonl`
+- `Local-first`: task records live with your code in `.pearls/issues.jsonl` and `.pearls/archive.jsonl`
 - `Agent-ready`: strict schema, dependency graph, finite-state transitions
 - `Git-native`: merge driver + hooks for real workflows
 - `Single binary`: `prl` is all users need in their PATH
@@ -72,6 +78,7 @@ prl mcp --repo .
 ## Documentation
 
 - User guide: `docs/USER-GUIDE.md`
+- Embedded Rust API: [Graph service](docs/GRAPH-SERVICE.md)
 - Whitepaper: `docs/WHITEPAPER.md`
 - Deep architecture: `docs/PEARLS.md`
 - End-to-end sample: `examples/WORKFLOW.md`

@@ -5,8 +5,10 @@
 //! Supports adding, listing, and deleting comments attached to a Pearl.
 
 use crate::output_mode::is_json_output;
+use pearls_app::service::{resolve_active_task, GraphService, Mutation, TaskRef};
+
 use anyhow::Result;
-use pearls_core::{identity, Comment, Storage};
+use pearls_core::Comment;
 use std::path::Path;
 
 /// Adds a comment to a Pearl.
@@ -26,21 +28,25 @@ pub fn add(id: String, body: String, author: Option<String>) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let (comment_id, pearl_id) = storage.with_lock(|storage| -> Result<(String, String)> {
-        let pearls = storage.load_all()?;
-        let full_id = identity::resolve_partial_id(&id, &pearls)?;
-        let mut pearl = storage.load_by_id(&full_id)?;
-
-        let author = author
-            .clone()
-            .or_else(default_author)
-            .unwrap_or_else(|| "unknown".to_string());
-        let comment_id = pearl.add_comment(author, body.clone())?;
-        pearl.validate()?;
-        storage.save(&pearl)?;
-        Ok((comment_id, pearl.id.clone()))
+    let author = author
+        .or_else(default_author)
+        .unwrap_or_else(|| "unknown".into());
+    let mut pearl_id = String::new();
+    let result = GraphService::open(".")?.execute(|snapshot| {
+        pearl_id = resolve_active_task(&snapshot.data, &id)?.id.clone();
+        Ok(vec![Mutation::AddComment {
+            task: TaskRef::Id(pearl_id.clone()),
+            author,
+            body,
+        }])
     })?;
+    let pearl = result.task(&pearl_id)?;
+    let comment_id = pearl
+        .comments
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("Added comment is missing"))?
+        .id
+        .clone();
 
     if is_json_output() {
         println!(
@@ -74,10 +80,8 @@ pub fn list(id: String, json_output: bool) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let full_id = identity::resolve_partial_id(&id, &pearls)?;
-    let pearl = storage.load_by_id(&full_id)?;
+    let snapshot = GraphService::open(".")?.snapshot()?;
+    let pearl = resolve_active_task(&snapshot.data, &id)?;
 
     if json_output {
         let payload = serde_json::json!({
@@ -118,26 +122,18 @@ pub fn delete(id: String, comment_id: String) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let (resolved_comment_id, pearl_id) =
-        storage.with_lock(|storage| -> Result<(String, String)> {
-            let pearls = storage.load_all()?;
-            let full_id = identity::resolve_partial_id(&id, &pearls)?;
-            let mut pearl = storage.load_by_id(&full_id)?;
-
-            let resolved_comment_id = resolve_comment_id(&comment_id, &pearl.comments)?;
-            if !pearl.delete_comment(&resolved_comment_id) {
-                anyhow::bail!(
-                    "Comment '{}' not found for Pearl {}",
-                    resolved_comment_id,
-                    pearl.id
-                );
-            }
-
-            pearl.validate()?;
-            storage.save(&pearl)?;
-            Ok((resolved_comment_id, pearl.id.clone()))
-        })?;
+    let mut pearl_id = String::new();
+    let mut resolved_comment_id = String::new();
+    GraphService::open(".")?.execute(|snapshot| {
+        let pearl = resolve_active_task(&snapshot.data, &id)?;
+        pearl_id = pearl.id.clone();
+        resolved_comment_id = resolve_comment_id(&comment_id, &pearl.comments)
+            .map_err(|error| pearls_app::AppError::InvalidInput(error.to_string()))?;
+        Ok(vec![Mutation::DeleteComment {
+            task: TaskRef::Id(pearl_id.clone()),
+            comment_id: resolved_comment_id.clone(),
+        }])
+    })?;
     if is_json_output() {
         println!(
             "{}",

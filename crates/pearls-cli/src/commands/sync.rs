@@ -8,7 +8,7 @@ use crate::git::ensure_clean_working_tree_for_sync;
 use crate::output_mode::is_json_output;
 use anyhow::Result;
 use git2::{Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature};
-use pearls_core::{IssueGraph, Storage};
+use pearls_app::service::GraphService;
 use std::path::Path;
 
 /// Syncs the repository with the remote using pull --rebase semantics.
@@ -166,20 +166,10 @@ fn push_origin(repo: &Repository, branch_name: &str) -> Result<()> {
 }
 
 fn run_integrity_checks(pearls_dir: &Path) -> Result<()> {
-    let storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let _graph = IssueGraph::from_pearls(pearls.clone())?;
-    let ids: std::collections::HashSet<String> = pearls.iter().map(|p| p.id.clone()).collect();
-    for pearl in &pearls {
-        for dep in &pearl.deps {
-            if !ids.contains(&dep.target_id) {
-                anyhow::bail!(
-                    "Integrity check failed: orphaned dependency {} -> {}",
-                    pearl.id,
-                    dep.target_id
-                );
-            }
-        }
-    }
+    let root = pearls_dir
+        .parent()
+        .filter(|root| !root.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    GraphService::open(root)?.snapshot()?;
     Ok(())
 }

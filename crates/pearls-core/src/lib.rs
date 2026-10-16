@@ -16,11 +16,12 @@ pub mod fsm;
 pub mod graph;
 pub mod identity;
 pub mod models;
+pub mod repository;
 pub mod storage;
 
 pub use config::{Config, OutputFormat};
 pub use error::{Error, Result};
-pub use fsm::validate_transition;
-pub use graph::IssueGraph;
+pub use fsm::{validate_transition, TransitionBlocker, TransitionDenial, TransitionDenialReason};
+pub use graph::{GraphError, IssueGraph};
 pub use models::{Comment, DepType, Dependency, Pearl, Status};
 pub use storage::Storage;

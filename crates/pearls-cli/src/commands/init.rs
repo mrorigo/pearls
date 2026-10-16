@@ -36,11 +36,7 @@ pub fn execute() -> Result<()> {
         fs::create_dir(pearls_dir)?;
     }
 
-    // Initialize empty issues.jsonl file (only if it doesn't exist)
-    let issues_path = pearls_dir.join("issues.jsonl");
-    if !issues_path.exists() {
-        fs::File::create(&issues_path)?;
-    }
+    pearls_app::service::GraphService::open(".")?.initialize_files()?;
 
     // Create default config.toml (only if it doesn't exist)
     let config_path = pearls_dir.join("config.toml");

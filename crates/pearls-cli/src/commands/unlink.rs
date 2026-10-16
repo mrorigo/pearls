@@ -5,8 +5,9 @@
 //! Removes a dependency relationship between two Pearls.
 
 use crate::output_mode::is_json_output;
+use pearls_app::service::{resolve_active_task, GraphService, Mutation, TaskRef};
+
 use anyhow::Result;
-use pearls_core::{identity, IssueGraph, Storage};
 use std::path::Path;
 
 /// Removes a dependency link between two Pearls.
@@ -34,31 +35,21 @@ pub fn execute(from: String, to: String) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let (from_id, to_id) = storage.with_lock(|storage| {
-        let mut pearls = storage.load_all()?;
-        let from_id = resolve_id(&from, &pearls)?;
-        let to_id = resolve_id(&to, &pearls)?;
-
-        let from_index = pearls
-            .iter()
-            .position(|pearl| pearl.id == from_id)
-            .ok_or_else(|| anyhow::anyhow!("Pearl '{}' not found", from_id))?;
-
-        let mut updated = pearls[from_index].clone();
-        let initial_len = updated.deps.len();
-        updated.deps.retain(|dep| dep.target_id != to_id);
-
-        if updated.deps.len() == initial_len {
-            anyhow::bail!("No dependency found between {} and {}", from_id, to_id);
+    let mut from_id = String::new();
+    let mut to_id = String::new();
+    GraphService::open(".")?.execute(|snapshot| {
+        let source = resolve_active_task(&snapshot.data, &from)?;
+        from_id = source.id.clone();
+        to_id = resolve_active_task(&snapshot.data, &to)?.id.clone();
+        if !source.deps.iter().any(|dep| dep.target_id == to_id) {
+            return Err(pearls_app::AppError::InvalidInput(
+                "No dependency exists between the Pearls".into(),
+            ));
         }
-
-        pearls[from_index] = updated.clone();
-        IssueGraph::from_pearls(pearls.clone())?;
-
-        updated.validate()?;
-        storage.save(&updated)?;
-        Ok((from_id, to_id))
+        Ok(vec![Mutation::Unlink {
+            from: TaskRef::Id(from_id.clone()),
+            to: TaskRef::Id(to_id.clone()),
+        }])
     })?;
 
     if is_json_output() {
@@ -76,15 +67,4 @@ pub fn execute(from: String, to: String) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn resolve_id(id: &str, pearls: &[pearls_core::Pearl]) -> Result<String> {
-    if id.starts_with("prl-")
-        && (id.len() == 10 || id.len() == 12)
-        && identity::validate_id_format(id).is_ok()
-    {
-        return Ok(id.to_string());
-    }
-
-    identity::resolve_partial_id(id, pearls).map_err(|e| anyhow::anyhow!("{}", e))
 }

@@ -5,7 +5,8 @@
 //! Validates JSONL syntax, schema compliance, and handles auto-close on commit messages.
 
 use anyhow::Result;
-use pearls_core::{IssueGraph, Status, Storage};
+use pearls_app::service::{GraphService, Mutation, TaskRef};
+use pearls_core::Status;
 use std::path::Path;
 
 /// Runs the pre-commit hook.
@@ -25,16 +26,44 @@ use std::path::Path;
 /// - Pearl schema validation fails
 /// - Duplicate IDs are detected
 pub fn pre_commit_hook(repo_path: &Path) -> Result<()> {
-    let pearls_path = repo_path.join(".pearls/issues.jsonl");
-    let mut storage = Storage::new(pearls_path)?;
-    let pearls = storage.load_all_strict()?;
-
-    if let Some(fix_ids) = extract_fix_ids(&repo_path.join(".git/COMMIT_EDITMSG"))? {
-        if !fix_ids.is_empty() {
-            auto_close(&mut storage, &pearls, &fix_ids)?;
+    let service = GraphService::open(repo_path)?;
+    let snapshot = service.snapshot()?;
+    let Some(ids) = extract_fix_ids(&repo_path.join(".git/COMMIT_EDITMSG"))? else {
+        return Ok(());
+    };
+    let mut requested = std::collections::HashSet::new();
+    for id in ids {
+        let task = snapshot
+            .data
+            .active
+            .iter()
+            .find(|task| task.id == id)
+            .ok_or_else(|| pearls_app::AppError::TaskNotFound { id: id.clone() })?;
+        if task.status != Status::Closed {
+            requested.insert(id);
         }
     }
-
+    if requested.is_empty() {
+        return Ok(());
+    }
+    let graph = pearls_core::IssueGraph::from_pearls_strict(
+        snapshot
+            .data
+            .active
+            .into_iter()
+            .chain(snapshot.data.archived)
+            .collect(),
+    )?;
+    let mutations = graph
+        .topological_sort()?
+        .into_iter()
+        .filter(|id| requested.contains(id))
+        .map(|id| Mutation::SetStatus {
+            task: TaskRef::Id(id),
+            status: Status::Closed,
+        })
+        .collect();
+    service.execute(|_| Ok(mutations))?;
     Ok(())
 }
 
@@ -57,24 +86,4 @@ fn extract_fix_ids(path: &Path) -> Result<Option<Vec<String>>> {
         }
     }
     Ok(Some(ids))
-}
-
-fn auto_close(storage: &mut Storage, pearls: &[pearls_core::Pearl], ids: &[String]) -> Result<()> {
-    let graph = IssueGraph::from_pearls(pearls.to_vec())?;
-    for id in ids {
-        let mut pearl = storage
-            .load_by_id(id)
-            .map_err(|_| anyhow::anyhow!("Pearl '{}' not found for auto-close", id))?;
-        if pearl.status == Status::Closed {
-            continue;
-        }
-        pearls_core::fsm::validate_transition(&pearl, Status::Closed, &graph)?;
-        pearl.status = Status::Closed;
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        pearl.updated_at = now;
-        pearl.validate()?;
-        storage.save(&pearl)?;
-    }
-    Ok(())
 }

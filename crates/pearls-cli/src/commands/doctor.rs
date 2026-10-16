@@ -6,6 +6,7 @@
 
 use crate::output_mode::is_json_output;
 use anyhow::Result;
+use pearls_app::service::GraphService;
 use pearls_core::{IssueGraph, Pearl, Status, Storage};
 use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
@@ -95,7 +96,12 @@ pub fn execute(fix: bool) -> Result<()> {
         });
     }
 
-    let orphaned = find_orphaned_deps(&deduped);
+    let mut complete = deduped.clone();
+    let archive_path = pearls_dir.join("archive.jsonl");
+    if archive_path.exists() {
+        complete.extend(Storage::new(archive_path)?.load_all_strict()?);
+    }
+    let orphaned = find_orphaned_deps(&complete);
     for (pearl_id, target_id) in &orphaned {
         findings.push(Finding {
             severity: Severity::Warning,
@@ -106,7 +112,7 @@ pub fn execute(fix: bool) -> Result<()> {
         });
     }
 
-    match IssueGraph::from_pearls(deduped.clone()) {
+    match IssueGraph::from_pearls(complete) {
         Ok(graph) => {
             for pearl in &deduped {
                 if pearl.status == Status::Blocked && !graph.is_blocked(&pearl.id) {
@@ -140,13 +146,10 @@ pub fn execute(fix: bool) -> Result<()> {
     }
 
     if fix {
-        let mut fixed = deduped.clone();
-        let removed = remove_orphaned_deps(&mut fixed);
+        GraphService::open(".")?.repair()?;
+        let removed = orphaned.len();
         let removed_dupes = duplicate_ids.len();
         let removed_invalid = invalid_lines;
-
-        let mut storage = Storage::new(issues_path)?;
-        storage.save_all(&fixed)?;
 
         findings.push(Finding {
             severity: Severity::Info,
@@ -244,17 +247,4 @@ fn find_orphaned_deps(pearls: &[Pearl]) -> Vec<(String, String)> {
     }
 
     orphaned
-}
-
-fn remove_orphaned_deps(pearls: &mut [Pearl]) -> usize {
-    let ids: HashSet<String> = pearls.iter().map(|pearl| pearl.id.clone()).collect();
-    let mut removed = 0usize;
-
-    for pearl in pearls {
-        let before = pearl.deps.len();
-        pearl.deps.retain(|dep| ids.contains(&dep.target_id));
-        removed += before - pearl.deps.len();
-    }
-
-    removed
 }

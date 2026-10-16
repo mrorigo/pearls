@@ -30,9 +30,17 @@ pub enum Error {
     #[error("Cycle detected: {0:?}")]
     CycleDetected(Vec<String>),
 
+    /// A complete graph has duplicate identities or missing endpoints.
+    #[error(transparent)]
+    InvalidGraph(#[from] crate::graph::GraphError),
+
     /// Invalid state transition.
     #[error("Invalid state transition: {0}")]
     InvalidTransition(String),
+
+    /// A graph-aware transition failed with structured blocker information.
+    #[error(transparent)]
+    TransitionDenied(#[from] crate::fsm::TransitionDenial),
 
     /// Ambiguous partial ID.
     #[error("Ambiguous ID: {0} matches {1:?}")]

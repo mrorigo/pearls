@@ -5,8 +5,9 @@
 //! Provides `prl meta get` and `prl meta set` for Pearl metadata.
 
 use crate::output_mode::is_json_output;
+use pearls_app::service::{resolve_active_task, GraphService, Mutation, TaskRef};
+
 use anyhow::Result;
-use pearls_core::{identity, Storage};
 use std::path::Path;
 
 /// Gets a metadata value for a Pearl.
@@ -32,10 +33,8 @@ pub fn get(id: String, key: String) -> Result<()> {
         anyhow::bail!("Pearls repository not initialized. Run 'prl init' first.");
     }
 
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearls = storage.load_all()?;
-    let full_id = identity::resolve_partial_id(&id, &pearls)?;
-    let pearl = storage.load_by_id(&full_id)?;
+    let snapshot = GraphService::open(".")?.snapshot()?;
+    let pearl = resolve_active_task(&snapshot.data, &id)?;
 
     match pearl.metadata.get(&key) {
         Some(value) => {
@@ -85,20 +84,14 @@ pub fn set(id: String, key: String, value: String) -> Result<()> {
 
     let parsed: serde_json::Value = serde_json::from_str(&value)
         .map_err(|e| anyhow::anyhow!("Metadata value must be valid JSON: {}", e))?;
-    let mut storage = Storage::new(pearls_dir.join("issues.jsonl"))?;
-    let pearl_id = storage.with_lock(|storage| -> Result<String> {
-        let pearls = storage.load_all()?;
-        let full_id = identity::resolve_partial_id(&id, &pearls)?;
-        let mut pearl = storage.load_by_id(&full_id)?;
-
-        pearl.metadata.insert(key.clone(), parsed.clone());
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-        pearl.updated_at = now;
-
-        pearl.validate()?;
-        storage.save(&pearl)?;
-        Ok(pearl.id.clone())
+    let mut pearl_id = String::new();
+    GraphService::open(".")?.execute(|snapshot| {
+        pearl_id = resolve_active_task(&snapshot.data, &id)?.id.clone();
+        Ok(vec![Mutation::SetMetadata {
+            task: TaskRef::Id(pearl_id.clone()),
+            key: key.clone(),
+            value: parsed,
+        }])
     })?;
 
     if is_json_output() {

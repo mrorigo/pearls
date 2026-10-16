@@ -9,14 +9,38 @@ use crate::{DepType, Error, Pearl, Result, Status};
 use petgraph::algo::{is_cyclic_directed, toposort};
 use petgraph::graph::{DiGraph, NodeIndex};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Integrity failure when constructing a complete task graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GraphError {
+    /// Multiple tasks have the same identity.
+    #[error("Duplicate Pearl ID: {id}")]
+    DuplicateId {
+        /// Identity shared by multiple tasks.
+        id: String,
+    },
+    /// A dependency references a task absent from the complete snapshot.
+    #[error("Missing dependency endpoint: {from_id} -> {to_id} ({dep_type:?})")]
+    MissingEndpoint {
+        /// Task containing the dependency.
+        from_id: String,
+        /// Missing dependency target.
+        to_id: String,
+        /// Relationship type whose endpoint is missing.
+        dep_type: DepType,
+    },
+}
 
 /// Issue graph for dependency management.
 ///
-/// Maintains a directed acyclic graph (DAG) of Pearl dependencies with
-/// efficient cycle detection and topological sorting capabilities.
+/// Maintains a directed acyclic graph of blocking dependencies. Non-blocking
+/// relationships remain available through the stored Pearls and may contain
+/// cycles; they do not constrain scheduling or status transitions.
 pub struct IssueGraph {
-    /// Petgraph directed graph where nodes are Pearl IDs and edges are dependencies.
+    /// Directed graph containing only `Blocks` edges between Pearl IDs.
     graph: DiGraph<String, DepType>,
     /// Map of Pearl IDs to their NodeIndex in the graph.
     id_to_node: HashMap<String, NodeIndex>,
@@ -37,37 +61,71 @@ impl IssueGraph {
     ///
     /// # Errors
     ///
-    /// Returns an error if the dependency graph contains cycles.
+    /// Returns an error if blocking dependencies form a cycle.
+    ///
+    /// This legacy constructor tolerates missing endpoints, for callers reading
+    /// only active tasks. New repository services should load referenced archives
+    /// and use [`Self::from_pearls_strict`] instead.
     pub fn from_pearls(pearls: Vec<Pearl>) -> Result<Self> {
+        Self::build(pearls, false)
+    }
+
+    /// Builds and validates a complete task graph, including archived endpoints.
+    ///
+    /// # Arguments
+    ///
+    /// * `pearls` - Complete task set, including referenced archived tasks.
+    ///
+    /// # Returns
+    ///
+    /// A graph whose blocking dependencies are acyclic and whose endpoints exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidGraph` for duplicate IDs or missing dependency endpoints,
+    /// `CycleDetected` for a blocking cycle, or a task validation error.
+    pub fn from_pearls_strict(pearls: Vec<Pearl>) -> Result<Self> {
+        Self::build(pearls, true)
+    }
+
+    fn build(pearls: Vec<Pearl>, strict: bool) -> Result<Self> {
         let mut graph = DiGraph::new();
         let mut id_to_node = HashMap::new();
-        let pearls_map: HashMap<String, Pearl> =
-            pearls.iter().map(|p| (p.id.clone(), p.clone())).collect();
-
-        // Add all Pearls as nodes
-        for pearl in &pearls {
-            let node_idx = graph.add_node(pearl.id.clone());
-            id_to_node.insert(pearl.id.clone(), node_idx);
+        let mut pearls_map = HashMap::new();
+        for pearl in pearls {
+            if strict {
+                pearl.validate()?;
+                if pearls_map.contains_key(&pearl.id) {
+                    return Err(GraphError::DuplicateId { id: pearl.id }.into());
+                }
+            }
+            let node = graph.add_node(pearl.id.clone());
+            id_to_node.insert(pearl.id.clone(), node);
+            pearls_map.insert(pearl.id.clone(), pearl);
         }
 
-        // Add all dependencies as edges
-        for pearl in &pearls {
-            if let Some(&from_idx) = id_to_node.get(&pearl.id) {
-                for dep in &pearl.deps {
-                    if let Some(&to_idx) = id_to_node.get(&dep.target_id) {
-                        graph.add_edge(from_idx, to_idx, dep.dep_type);
+        // Preserve input node order for predictable traversal; HashMap
+        // iteration must not choose which cycle is reported.
+        for from in graph.node_indices().collect::<Vec<_>>() {
+            let pearl = &pearls_map[&graph[from]];
+            for dep in &pearl.deps {
+                if let Some(&to) = id_to_node.get(&dep.target_id) {
+                    if dep.dep_type == DepType::Blocks {
+                        graph.add_edge(from, to, dep.dep_type);
                     }
+                } else if strict {
+                    return Err(GraphError::MissingEndpoint {
+                        from_id: pearl.id.clone(),
+                        to_id: dep.target_id.clone(),
+                        dep_type: dep.dep_type,
+                    }
+                    .into());
                 }
             }
         }
-
-        // Check for cycles
-        if is_cyclic_directed(&graph) {
-            if let Some(cycle) = Self::find_cycle_internal(&graph, &id_to_node) {
-                return Err(Error::CycleDetected(cycle));
-            }
+        if let Some(cycle) = Self::find_cycle_internal(&graph) {
+            return Err(Error::CycleDetected(cycle));
         }
-
         Ok(Self {
             graph,
             id_to_node,
@@ -75,7 +133,23 @@ impl IssueGraph {
         })
     }
 
-    /// Adds a dependency between two Pearls with cycle detection.
+    /// Returns a task from this graph by its full ID.
+    ///
+    /// Archived tasks are available when included in the input snapshot.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Full identity of the requested task.
+    ///
+    /// # Returns
+    ///
+    /// A task reference, or `None` when the task is absent.
+    #[must_use]
+    pub fn pearl(&self, id: &str) -> Option<&Pearl> {
+        self.pearls.get(id)
+    }
+
+    /// Adds a dependency, rejecting cycles composed of blocking edges.
     ///
     /// # Arguments
     ///
@@ -105,15 +179,12 @@ impl IssueGraph {
             .copied()
             .ok_or_else(|| Error::NotFound(format!("Pearl {} not found", to_id)))?;
 
-        // Add the edge temporarily so cycle detection sees the proposed graph.
-        let edge_idx = self.graph.add_edge(from_idx, to_idx, dep_type);
-
-        // Check for cycles
-        if is_cyclic_directed(&self.graph) {
-            let cycle = Self::find_cycle_internal(&self.graph, &self.id_to_node)
-                .unwrap_or_else(|| vec!["cycle_detected".to_string()]);
-            self.graph.remove_edge(edge_idx);
-            return Err(Error::CycleDetected(cycle));
+        if dep_type == DepType::Blocks {
+            let edge = self.graph.add_edge(from_idx, to_idx, dep_type);
+            if let Some(cycle) = Self::find_cycle_internal(&self.graph) {
+                self.graph.remove_edge(edge);
+                return Err(Error::CycleDetected(cycle));
+            }
         }
 
         // Update the Pearl's dependencies
@@ -127,7 +198,7 @@ impl IssueGraph {
         Ok(())
     }
 
-    /// Removes a dependency between two Pearls.
+    /// Removes all dependency types between two Pearls.
     ///
     /// # Arguments
     ///
@@ -155,7 +226,7 @@ impl IssueGraph {
             .ok_or_else(|| Error::NotFound(format!("Pearl {} not found", to_id)))?;
 
         // Remove the edge from the graph
-        if let Some(edge_idx) = self.graph.find_edge(from_idx, to_idx) {
+        while let Some(edge_idx) = self.graph.find_edge(from_idx, to_idx) {
             self.graph.remove_edge(edge_idx);
         }
 
@@ -167,7 +238,7 @@ impl IssueGraph {
         Ok(())
     }
 
-    /// Checks if the graph contains cycles.
+    /// Checks if blocking dependencies contain a cycle.
     ///
     /// # Returns
     ///
@@ -176,67 +247,58 @@ impl IssueGraph {
         is_cyclic_directed(&self.graph)
     }
 
-    /// Finds a cycle in the graph if one exists.
+    /// Finds a cycle of blocking dependencies if one exists.
     ///
     /// # Returns
     ///
     /// Some(cycle_path) if a cycle exists, None otherwise.
     /// The cycle_path is a vector of Pearl IDs forming the cycle.
     pub fn find_cycle(&self) -> Option<Vec<String>> {
-        Self::find_cycle_internal(&self.graph, &self.id_to_node)
+        Self::find_cycle_internal(&self.graph)
     }
 
-    /// Internal helper to find a cycle using DFS.
-    fn find_cycle_internal(
-        graph: &DiGraph<String, DepType>,
-        _id_to_node: &HashMap<String, NodeIndex>,
-    ) -> Option<Vec<String>> {
-        use petgraph::visit::Dfs;
-
-        // Try to find a cycle by attempting topological sort
-        // If it fails, we know there's a cycle
-        if toposort(graph, None).is_err() {
-            // Simple cycle detection: do DFS and look for back edges
-            for start_node in graph.node_indices() {
-                let mut dfs = Dfs::new(graph, start_node);
-                let mut visited = std::collections::HashSet::new();
-                let mut rec_stack = std::collections::HashSet::new();
-
-                while let Some(node) = dfs.next(graph) {
-                    if rec_stack.contains(&node) {
-                        // Found a back edge, construct the cycle
-                        let mut cycle = vec![graph[node].clone()];
-
-                        // Walk back to find the cycle
-                        for neighbor in graph.neighbors(node) {
-                            if neighbor == node {
-                                cycle.push(graph[node].clone());
-                                return Some(cycle);
-                            }
-                        }
+    // Iterative DFS keeps cycle detection safe for deeply nested imports.
+    fn find_cycle_internal(graph: &DiGraph<String, DepType>) -> Option<Vec<String>> {
+        let mut visited = vec![false; graph.node_count()];
+        let mut active_positions = vec![None; graph.node_count()];
+        for start in graph.node_indices() {
+            if visited[start.index()] {
+                continue;
+            }
+            visited[start.index()] = true;
+            active_positions[start.index()] = Some(0);
+            let mut stack = vec![(start, graph.neighbors(start))];
+            while let Some((node, neighbors)) = stack.last_mut() {
+                let current = *node;
+                if let Some(next) = neighbors.next() {
+                    if let Some(position) = active_positions[next.index()] {
+                        let mut cycle: Vec<_> = stack[position..]
+                            .iter()
+                            .map(|(node, _)| graph[*node].clone())
+                            .collect();
+                        cycle.push(graph[next].clone());
+                        return Some(cycle);
                     }
-
-                    visited.insert(node);
-                    rec_stack.insert(node);
-                }
-
-                for node in visited {
-                    rec_stack.remove(&node);
+                    if !visited[next.index()] {
+                        visited[next.index()] = true;
+                        active_positions[next.index()] = Some(stack.len());
+                        stack.push((next, graph.neighbors(next)));
+                    }
+                } else {
+                    active_positions[current.index()] = None;
+                    stack.pop();
                 }
             }
-
-            // Fallback: return a simple cycle representation
-            return Some(vec!["cycle_detected".to_string()]);
         }
-
         None
     }
 
-    /// Performs topological sort on the graph.
+    /// Orders tasks so each blocking dependency precedes its dependents.
     ///
     /// # Returns
     ///
-    /// Ok(sorted_ids) with Pearl IDs in topological order, or Err if graph is cyclic.
+    /// Task IDs with blocking prerequisites first. Non-blocking relationships
+    /// do not affect the order.
     ///
     /// # Errors
     ///
@@ -246,6 +308,7 @@ impl IssueGraph {
             Ok(sorted_nodes) => {
                 let sorted_ids = sorted_nodes
                     .iter()
+                    .rev()
                     .map(|node_idx| self.graph[*node_idx].clone())
                     .collect();
                 Ok(sorted_ids)
