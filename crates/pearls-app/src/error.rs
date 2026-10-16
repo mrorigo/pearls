@@ -28,6 +28,8 @@ pub enum ErrorCode {
     RevisionConflict,
     /// An operation key was reused with different content.
     IdempotencyConflict,
+    /// The full operation receipt expired; its key remains reserved.
+    OperationExpired,
     /// An external key identifies multiple tasks or a different definition.
     ExternalKeyConflict,
     /// The repository lock timed out.
@@ -117,6 +119,7 @@ impl AppError {
                 | RepositoryError::UnsupportedSchema { .. } => ErrorCode::CorruptStorage,
                 RepositoryError::RevisionConflict { .. } => ErrorCode::RevisionConflict,
                 RepositoryError::IdempotencyConflict { .. } => ErrorCode::IdempotencyConflict,
+                RepositoryError::OperationExpired { .. } => ErrorCode::OperationExpired,
                 RepositoryError::LockTimeout => ErrorCode::LockTimeout,
                 RepositoryError::InvalidTask(_) => ErrorCode::ValidationError,
                 RepositoryError::Io(_) => ErrorCode::IoError,
@@ -156,7 +159,8 @@ impl AppError {
                 RepositoryError::RevisionConflict { expected, actual } => {
                     Some(serde_json::json!({"expected": expected, "actual": actual}))
                 }
-                RepositoryError::IdempotencyConflict { operation_key } => {
+                RepositoryError::IdempotencyConflict { operation_key }
+                | RepositoryError::OperationExpired { operation_key } => {
                     Some(serde_json::json!({"operation_key": operation_key}))
                 }
                 RepositoryError::CorruptStorage { path, reason } => {

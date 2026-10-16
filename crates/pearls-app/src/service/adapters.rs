@@ -84,7 +84,9 @@ impl GraphService {
 
     /// Initializes task files in an explicitly created `.pearls` directory.
     ///
-    /// Existing task records and receipts are preserved. This does not create the
+    /// Existing task records and unexpired receipts are preserved. Schema v1 is
+    /// explicitly migrated to v2 with a new replay window for legacy receipts.
+    /// This does not create the
     /// directory, configure Git, or install hooks; the initialization adapter owns
     /// those explicit actions.
     ///
@@ -92,7 +94,7 @@ impl GraphService {
     /// Returns graph, identity, storage, or recovery failures.
     pub fn initialize_files(&self) -> Result<OperationReceipt> {
         self.store
-            .repair(&operation_key()?, "initialize:v1", |active, archived| {
+            .migrate_and_repair(&operation_key()?, "initialize:v1", |active, archived| {
                 let data = RepositoryData {
                     active: parse(active, &self.pearls_dir.join("issues.jsonl"))?,
                     archived: parse(archived, &self.pearls_dir.join("archive.jsonl"))?,
@@ -179,6 +181,7 @@ impl GraphService {
 
     /// Repairs malformed active JSONL, duplicate active IDs, and missing endpoints.
     ///
+    /// Explicitly migrates v1 transaction metadata when present.
     /// Keeps the newest duplicate (first on timestamp ties), drops malformed JSON
     /// lines, and preserves archive records. Archived endpoints are retained.
     /// Parsed records failing task validation, conflicting identities, or cycles prevent publication.
@@ -187,7 +190,7 @@ impl GraphService {
     /// Returns validation, integrity, locking, or recovery failures.
     pub fn repair(&self) -> Result<OperationReceipt> {
         self.store
-            .repair(&operation_key()?, "doctor:v1", |active, archived| {
+            .migrate_and_repair(&operation_key()?, "doctor:v1", |active, archived| {
                 let mut unique: BTreeMap<String, Pearl> = BTreeMap::new();
                 for task in active
                     .lines()

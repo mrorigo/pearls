@@ -34,6 +34,12 @@ pub struct Config {
     #[serde(default = "default_compact_threshold")]
     pub compact_threshold_days: u32,
 
+    /// Days to retain each new full operation receipt (positive; default 30).
+    ///
+    /// Existing receipt deadlines remain unchanged when this setting changes.
+    #[serde(default = "default_receipt_retention")]
+    pub receipt_retention_days: u32,
+
     /// Whether to use index file for large repositories.
     #[serde(default)]
     pub use_index: bool,
@@ -62,12 +68,17 @@ fn default_compact_threshold() -> u32 {
     30
 }
 
+fn default_receipt_retention() -> u32 {
+    30
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             default_priority: default_priority(),
             max_priority: default_max_priority(),
             compact_threshold_days: default_compact_threshold(),
+            receipt_retention_days: default_receipt_retention(),
             use_index: false,
             output_format: OutputFormat::default(),
             auto_close_on_commit: false,
@@ -124,6 +135,7 @@ impl Config {
     /// - `PEARLS_DEFAULT_PRIORITY` - Default priority (0-`max_priority`)
     /// - `PEARLS_MAX_PRIORITY` - Maximum priority value (0-31)
     /// - `PEARLS_COMPACT_THRESHOLD_DAYS` - Compaction threshold in days
+    /// - `PEARLS_RECEIPT_RETENTION_DAYS` - Positive full-receipt retention in days
     /// - `PEARLS_USE_INDEX` - Whether to use index file (true/false)
     /// - `PEARLS_OUTPUT_FORMAT` - Output format (json/table/plain)
     /// - `PEARLS_AUTO_CLOSE_ON_COMMIT` - Auto-close on commit (true/false)
@@ -183,6 +195,13 @@ impl Config {
             })?;
         }
 
+        if let Ok(value) = std::env::var("PEARLS_RECEIPT_RETENTION_DAYS") {
+            self.receipt_retention_days = value.parse().map_err(|_| {
+                crate::Error::InvalidPearl(
+                    "PEARLS_RECEIPT_RETENTION_DAYS must be a positive number".into(),
+                )
+            })?;
+        }
         Ok(())
     }
 
@@ -219,6 +238,11 @@ impl Config {
             ));
         }
 
+        if self.receipt_retention_days == 0 {
+            return Err(crate::Error::InvalidPearl(
+                "receipt_retention_days must be greater than 0".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -248,14 +272,16 @@ impl Config {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
     use tempfile::TempDir;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Serializes tests that read or modify process-wide configuration variables.
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn clear_all_env_vars() {
+        std::env::remove_var("PEARLS_RECEIPT_RETENTION_DAYS");
         std::env::remove_var("PEARLS_DEFAULT_PRIORITY");
         std::env::remove_var("PEARLS_MAX_PRIORITY");
         std::env::remove_var("PEARLS_COMPACT_THRESHOLD_DAYS");
@@ -479,6 +505,7 @@ auto_close_on_commit = true
                 default_priority: 1,
                 max_priority: 7,
                 compact_threshold_days: 45,
+                receipt_retention_days: 30,
                 use_index: true,
                 output_format: OutputFormat::Json,
                 auto_close_on_commit: true,
@@ -510,6 +537,39 @@ auto_close_on_commit = true
             std::env::set_var("PEARLS_DEFAULT_PRIORITY", "3");
             let config = Config::load(temp_dir.path()).unwrap();
             assert_eq!(config.default_priority, 3);
+        });
+    }
+
+    #[test]
+    fn receipt_retention_defaults_and_validates_file_and_environment() {
+        run_env_test(|| {
+            let root = TempDir::new().unwrap();
+            assert_eq!(
+                Config::load(root.path()).unwrap().receipt_retention_days,
+                30
+            );
+            std::fs::write(
+                root.path().join("config.toml"),
+                "receipt_retention_days = 7\n",
+            )
+            .unwrap();
+            assert_eq!(Config::load(root.path()).unwrap().receipt_retention_days, 7);
+            std::env::set_var("PEARLS_RECEIPT_RETENTION_DAYS", "90");
+            assert_eq!(
+                Config::load(root.path()).unwrap().receipt_retention_days,
+                90
+            );
+            for value in ["0", "-1", "invalid"] {
+                std::env::set_var("PEARLS_RECEIPT_RETENTION_DAYS", value);
+                assert!(Config::load(root.path()).is_err());
+            }
+            std::env::remove_var("PEARLS_RECEIPT_RETENTION_DAYS");
+            std::fs::write(
+                root.path().join("config.toml"),
+                "receipt_retention_days = 0\n",
+            )
+            .unwrap();
+            assert!(Config::load(root.path()).is_err());
         });
     }
 }

@@ -62,13 +62,24 @@ impl RepositoryFiles {
         name: &str,
         bytes: &[u8],
     ) -> Result<T> {
+        self.parse_with_legacy(name, bytes, false)
+    }
+
+    pub(super) fn parse_with_legacy<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+        bytes: &[u8],
+        allow_legacy: bool,
+    ) -> Result<T> {
         #[derive(Deserialize)]
         struct Schema {
             schema_version: u32,
         }
         let schema: Schema =
             serde_json::from_slice(bytes).map_err(|error| self.corrupt(name, error.to_string()))?;
-        self.version(name, schema.schema_version)?;
+        if !(allow_legacy && schema.schema_version == 1) {
+            self.version(name, schema.schema_version)?;
+        }
         serde_json::from_slice(bytes).map_err(|error| self.corrupt(name, error.to_string()))
     }
 

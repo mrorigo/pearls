@@ -10,7 +10,7 @@
 //!
 //! # On-disk protocol
 //!
-//! `transaction-state.json` stores schema version 1, the monotonic generation,
+//! `transaction-state.json` stores schema version 2, the monotonic generation,
 //! task-file fingerprints, and successful operation receipts. Retain this file
 //! alongside task and archive files in Git. Restoring an earlier repository
 //! state also restores its generation and receipt history; replay guarantees do
@@ -24,18 +24,19 @@
 //! Other platforms support process-crash recovery without a power-loss promise.
 //! Abandoned staging files have no authority and are ignored on reopening.
 //!
-//! Both state and journal schemas reject unsupported versions without modifying
-//! their contents. Schema migration and receipt expiration are intentionally not
-//! performed by ordinary reads or task compaction.
+//! Reads expire full receipts into permanent operation-key tombstones using the
+//! deadline assigned at commit. Expiration does not change the graph revision.
+//! Ordinary reads reject unsupported schemas. Explicit initialization or repair
+//! can recover and migrate v1 metadata; legacy receipts receive a new full window.
 
 use crate::storage::{reject_managed_path_symlinks, MAX_JSONL_LINE_BYTES};
 use crate::{Pearl, Storage};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const ISSUES: &str = "issues.jsonl";
 const ARCHIVE: &str = "archive.jsonl";
 const STATE: &str = "transaction-state.json";
@@ -150,6 +151,12 @@ pub enum RepositoryError {
         /// Conflicting repository-local key.
         operation_key: String,
     },
+    /// The full receipt expired; the operation key remains permanently reserved.
+    #[error("Operation receipt expired: {operation_key}")]
+    OperationExpired {
+        /// Key that must not be reused or blindly retried with a new revision.
+        operation_key: String,
+    },
     /// The repository lock could not be acquired within its timeout.
     #[error("Repository lock timed out")]
     LockTimeout,
@@ -178,10 +185,12 @@ impl From<crate::Error> for RepositoryError {
 /// Opening does not initialize a repository or modify hooks or Git settings.
 /// The first read establishes transaction metadata for existing JSONL files.
 /// Reads can recover publication or record a newly observed external edit.
-/// Full receipts are currently retained; expiration policy is separate from
-/// task compaction and will be introduced with the application service.
+/// Full receipts expire at their recorded deadlines. Permanent tombstones reserve
+/// expired keys; task compaction does not shorten receipt retention.
 pub struct RepositoryStore {
     files: RepositoryFiles,
+    #[cfg(test)]
+    now_override: std::cell::Cell<Option<i64>>,
 }
 
 impl RepositoryStore {
@@ -208,6 +217,8 @@ impl RepositoryStore {
         }
         Ok(Self {
             files: RepositoryFiles::new(directory.canonicalize()?),
+            #[cfg(test)]
+            now_override: std::cell::Cell::new(None),
         })
     }
 
@@ -233,10 +244,12 @@ impl RepositoryStore {
     ///
     /// # Errors
     ///
-    /// Returns typed lock, storage integrity, schema, and IO failures.
+    /// Returns typed lock, storage integrity, schema, IO, or expired-key failures.
+    /// An expired key returns `OperationExpired`; only unknown keys return `None`.
     pub fn receipt(&self, operation_key: &str) -> Result<Option<OperationReceipt>> {
         self.locked(|| {
             let (_, state) = self.load()?;
+            state.check_expired(operation_key)?;
             Ok(state.receipts.get(operation_key).cloned())
         })
     }
@@ -288,6 +301,9 @@ impl RepositoryStore {
         E: From<RepositoryError>,
     {
         let (mut data, state) = self.load()?;
+        state
+            .check_expired(&request.operation_key)
+            .map_err(E::from)?;
         if let Some(receipt) = state.receipts.get(&request.operation_key) {
             if receipt.request_digest != request.request_digest
                 || receipt.before_revision != request.expected_revision
@@ -333,6 +349,10 @@ impl RepositoryStore {
             after_revision: state.revision(),
             created_ids,
         };
+        let deadline = self.receipt_deadline()?;
+        state
+            .receipt_deadlines
+            .insert(request.operation_key.clone(), deadline);
         state
             .receipts
             .insert(request.operation_key.clone(), receipt.clone());
@@ -370,6 +390,9 @@ impl RepositoryStore {
                         "Operation identity must be nonempty".into(),
                     )));
                 }
+                state
+                    .check_expired(&request.operation_key)
+                    .map_err(E::from)?;
                 if state.receipts.contains_key(&request.operation_key) {
                     return Err(E::from(RepositoryError::IdempotencyConflict {
                         operation_key: request.operation_key.clone(),
@@ -418,6 +441,42 @@ impl RepositoryStore {
         F: FnOnce(&str, &str) -> std::result::Result<RepositoryData, E>,
         E: From<RepositoryError>,
     {
+        self.repair_with_legacy(operation_key, request_digest, repair, false)
+    }
+
+    /// Explicitly upgrades schema v1 while repairing or initializing task images.
+    ///
+    /// Recovers a pending v1 journal first. Existing receipts receive a full replay
+    /// window starting at migration. Ordinary reads and compaction never migrate.
+    /// Back up all authoritative files before upgrading; older schema-aware writers
+    /// cannot read v2 metadata. Other unsupported versions remain errors.
+    ///
+    /// # Errors
+    /// Returns callback, configuration, schema, integrity, or publication failures.
+    pub fn migrate_and_repair<F, E>(
+        &self,
+        operation_key: &str,
+        request_digest: &str,
+        repair: F,
+    ) -> std::result::Result<OperationReceipt, E>
+    where
+        F: FnOnce(&str, &str) -> std::result::Result<RepositoryData, E>,
+        E: From<RepositoryError>,
+    {
+        self.repair_with_legacy(operation_key, request_digest, repair, true)
+    }
+
+    fn repair_with_legacy<F, E>(
+        &self,
+        operation_key: &str,
+        request_digest: &str,
+        repair: F,
+        allow_legacy: bool,
+    ) -> std::result::Result<OperationReceipt, E>
+    where
+        F: FnOnce(&str, &str) -> std::result::Result<RepositoryData, E>,
+        E: From<RepositoryError>,
+    {
         if operation_key.is_empty() || request_digest.is_empty() {
             return Err(RepositoryError::InvalidInput(
                 "Maintenance identity must be nonempty".into(),
@@ -426,14 +485,14 @@ impl RepositoryStore {
         }
         self.locked(|| {
             Ok((|| {
-                self.recover().map_err(E::from)?;
+                self.recover_with_legacy(allow_legacy).map_err(E::from)?;
                 let before = self.files.images().map_err(E::from)?;
                 let stored = self.files.read(STATE).map_err(E::from)?;
                 let mut state = match stored.as_deref() {
                     Some(bytes) => {
-                        let state: State = self.files.parse(STATE, bytes).map_err(E::from)?;
-                        self.files
-                            .version(STATE, state.schema_version)
+                        let state: State = self
+                            .files
+                            .parse_with_legacy(STATE, bytes, allow_legacy)
                             .map_err(E::from)?;
                         self.validate_state(&state).map_err(E::from)?;
                         state
@@ -443,8 +502,21 @@ impl RepositoryStore {
                         generation: 0,
                         files: before.fingerprints(),
                         receipts: BTreeMap::new(),
+                        receipt_deadlines: BTreeMap::new(),
+                        expired_keys: BTreeSet::new(),
                     },
                 };
+                if state.schema_version == 1 {
+                    let deadline = self.receipt_deadline().map_err(E::from)?;
+                    state.schema_version = VERSION;
+                    state.receipt_deadlines = state
+                        .receipts
+                        .keys()
+                        .map(|key| (key.clone(), deadline))
+                        .collect();
+                }
+                state.expire(self.now().map_err(E::from)?);
+                state.check_expired(operation_key).map_err(E::from)?;
                 if let Some(receipt) = state.receipts.get(operation_key) {
                     if receipt.request_digest != request_digest {
                         return Err(E::from(RepositoryError::IdempotencyConflict {
@@ -472,6 +544,10 @@ impl RepositoryStore {
                     after_revision: state.revision(),
                     created_ids: BTreeMap::new(),
                 };
+                let deadline = self.receipt_deadline().map_err(E::from)?;
+                state
+                    .receipt_deadlines
+                    .insert(operation_key.into(), deadline);
                 state.receipts.insert(operation_key.into(), receipt.clone());
                 self.publish(
                     before.fingerprints(),
@@ -484,6 +560,30 @@ impl RepositoryStore {
             })())
         })
         .map_err(E::from)?
+    }
+
+    fn now(&self) -> Result<i64> {
+        #[cfg(test)]
+        if let Some(now) = self.now_override.get() {
+            return Ok(now);
+        }
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| RepositoryError::InvalidInput(error.to_string()))?
+            .as_secs();
+        i64::try_from(seconds)
+            .map_err(|_| RepositoryError::InvalidInput("Receipt clock overflow".into()))
+    }
+
+    fn receipt_deadline(&self) -> Result<i64> {
+        #[cfg(test)]
+        let _environment = crate::config::tests::ENV_LOCK.lock().map_err(|_| {
+            RepositoryError::InvalidInput("Configuration test lock poisoned".into())
+        })?;
+        let config = crate::Config::load(&self.files.path("")).map_err(RepositoryError::from)?;
+        self.now()?
+            .checked_add(i64::from(config.receipt_retention_days) * 86_400)
+            .ok_or_else(|| RepositoryError::InvalidInput("Receipt deadline overflow".into()))
     }
 
     fn locked<T>(&self, work: impl FnOnce() -> Result<T>) -> Result<T> {
@@ -509,8 +609,11 @@ impl RepositoryStore {
                 generation: 0,
                 files: fingerprints.clone(),
                 receipts: BTreeMap::new(),
+                receipt_deadlines: BTreeMap::new(),
+                expired_keys: BTreeSet::new(),
             },
         };
+        let expired = state.expire(self.now()?);
         if state.files != fingerprints {
             state.advance()?;
             state.files = fingerprints.clone();
@@ -520,8 +623,13 @@ impl RepositoryStore {
                 images,
                 state.clone(),
             )?;
-        } else if stored.is_none() {
-            self.publish(fingerprints, None, images, state.clone())?;
+        } else if stored.is_none() || expired {
+            self.publish(
+                fingerprints,
+                fingerprint(stored.as_deref()),
+                images,
+                state.clone(),
+            )?;
         }
         Ok((data, state))
     }
@@ -635,12 +743,21 @@ impl RepositoryStore {
     }
 
     fn recover(&self) -> Result<()> {
+        self.recover_with_legacy(false)
+    }
+
+    fn recover_with_legacy(&self, allow_legacy: bool) -> Result<()> {
         let Some(bytes) = self.files.read(JOURNAL)? else {
             return Ok(());
         };
-        let journal: Journal = self.files.parse(JOURNAL, &bytes)?;
-        self.files.version(JOURNAL, journal.schema_version)?;
-        self.files.version(STATE, journal.state.schema_version)?;
+        let journal: Journal = self
+            .files
+            .parse_with_legacy(JOURNAL, &bytes, allow_legacy)?;
+        if journal.schema_version != journal.state.schema_version {
+            return Err(self
+                .files
+                .corrupt(JOURNAL, "Journal and state schema versions differ"));
+        }
         self.validate_state(&journal.state)?;
         self.decode(&journal.after)?;
         if journal.state.files != journal.after.fingerprints() {
@@ -695,6 +812,26 @@ impl RepositoryStore {
     }
 
     fn validate_state(&self, state: &State) -> Result<()> {
+        if state.schema_version == 1 {
+            if !state.receipt_deadlines.is_empty() || !state.expired_keys.is_empty() {
+                return Err(self
+                    .files
+                    .corrupt(STATE, "Retention fields in legacy state"));
+            }
+        } else if state.receipt_deadlines.keys().ne(state.receipts.keys())
+            || state
+                .receipt_deadlines
+                .values()
+                .any(|deadline| *deadline < 0)
+            || state
+                .expired_keys
+                .iter()
+                .any(|key| key.is_empty() || state.receipts.contains_key(key))
+        {
+            return Err(self
+                .files
+                .corrupt(STATE, "Invalid receipt retention metadata"));
+        }
         for digest in [&state.files.issues, &state.files.archive]
             .into_iter()
             .flatten()
@@ -753,9 +890,37 @@ struct State {
     generation: u64,
     files: Fingerprints,
     receipts: BTreeMap<String, OperationReceipt>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    receipt_deadlines: BTreeMap<String, i64>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    expired_keys: BTreeSet<String>,
 }
 
 impl State {
+    fn check_expired(&self, operation_key: &str) -> Result<()> {
+        if self.expired_keys.contains(operation_key) {
+            return Err(RepositoryError::OperationExpired {
+                operation_key: operation_key.into(),
+            });
+        }
+        Ok(())
+    }
+
+    fn expire(&mut self, now: i64) -> bool {
+        let expired: Vec<_> = self
+            .receipt_deadlines
+            .iter()
+            .filter(|(_, deadline)| **deadline <= now)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &expired {
+            self.receipts.remove(key);
+            self.receipt_deadlines.remove(key);
+            self.expired_keys.insert(key.clone());
+        }
+        !expired.is_empty()
+    }
+
     fn advance(&mut self) -> Result<()> {
         self.generation = self.generation.checked_add(1).ok_or_else(|| {
             RepositoryError::InvalidInput("Repository generation exhausted".to_string())
@@ -795,3 +960,6 @@ fn fingerprint(bytes: Option<&[u8]>) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod retention_tests;

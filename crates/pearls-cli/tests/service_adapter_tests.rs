@@ -96,6 +96,9 @@ fn cli_import_rejects_cycles_atomically() {
     let before = service.snapshot().unwrap();
     let output = cli(root.path(), &["import", "beads", path.to_str().unwrap()]);
     assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .to_lowercase()
+        .contains("cycle"));
     assert_eq!(service.snapshot().unwrap(), before);
 }
 

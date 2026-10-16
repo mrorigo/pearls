@@ -72,6 +72,7 @@ prl mcp --repo .
 ## Documentation
 
 - User guide: `docs/USER-GUIDE.md`
+- Embedded Rust API: [Graph service](docs/GRAPH-SERVICE.md)
 - Whitepaper: `docs/WHITEPAPER.md`
 - Deep architecture: `docs/PEARLS.md`
 - End-to-end sample: `examples/WORKFLOW.md`

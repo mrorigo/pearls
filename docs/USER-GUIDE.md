@@ -179,6 +179,8 @@ When you run `prl init`, Pearls sets up the following:
 ```
 .pearls/
   issues.jsonl
+  archive.jsonl
+  transaction-state.json
   config.toml
 .gitattributes
 .git/
@@ -198,6 +200,7 @@ The configuration file with defaults you can tune:
 ```toml
 default_priority = 2
 compact_threshold_days = 30
+receipt_retention_days = 30
 use_index = false
 output_format = "table"
 auto_close_on_commit = false
@@ -372,7 +375,7 @@ Dependency types:
 
 ## Ready Queue
 
-Show unblocked work, ordered by priority and recency:
+Show unblocked Open tasks, ordered by priority, newest update, then full ID:
 
 ```bash
 prl ready
@@ -493,6 +496,7 @@ Key options:
 - `default_priority` (0-`max_priority`)
 - `max_priority` (0-31, default `4`)
 - `compact_threshold_days`
+- `receipt_retention_days` (positive number of days, default `30`; applies to new receipts)
 - `use_index`
 - `output_format` (`json`, `table`, `plain`)
 - `auto_close_on_commit`
@@ -501,16 +505,27 @@ Environment overrides:
 - `PEARLS_DEFAULT_PRIORITY`
 - `PEARLS_MAX_PRIORITY`
 - `PEARLS_COMPACT_THRESHOLD_DAYS`
+- `PEARLS_RECEIPT_RETENTION_DAYS`
 - `PEARLS_USE_INDEX`
 - `PEARLS_OUTPUT_FORMAT`
 - `PEARLS_AUTO_CLOSE_ON_COMMIT`
+
+Full operation receipts expire after their configured replay window.
+Their keys remain reserved permanently. Expired keys return `operation_expired` and cannot reapply an operation.
+See the [embedded graph service guide](GRAPH-SERVICE.md) for retention, schema upgrades, and rollback boundaries.
+
+## Embedded Rust API
+
+Use `pearls_app::service::GraphService` with an explicit repository root.
+It provides consistent graph snapshots, atomic batches, scheduling sets, and receipt lookup.
+The [graph service guide](GRAPH-SERVICE.md) includes a runnable example and the error contract.
 
 ## Import and Migration
 
 Import Pearls from a Beads JSONL file:
 
 ```bash
-prl import path/to/beads.jsonl
+prl import beads path/to/beads.jsonl
 ```
 
 Invalid lines are skipped with a warning.

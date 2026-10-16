@@ -17,7 +17,7 @@ fn task(id: &str, title: &str) -> Pearl {
     pearl
 }
 
-fn setup() -> (TempDir, RepositoryStore, RepositorySnapshot) {
+pub(super) fn setup() -> (TempDir, RepositoryStore, RepositorySnapshot) {
     let root = TempDir::new().expect("temporary repository");
     fs::create_dir(root.path().join(".pearls")).expect("create .pearls");
     let store = RepositoryStore::open(root.path()).expect("open store");
@@ -40,7 +40,7 @@ fn setup() -> (TempDir, RepositoryStore, RepositorySnapshot) {
     (root, store, snapshot)
 }
 
-fn request(snapshot: &RepositorySnapshot, key: &str) -> OperationRequest {
+pub(super) fn request(snapshot: &RepositorySnapshot, key: &str) -> OperationRequest {
     OperationRequest {
         operation_key: key.to_string(),
         request_digest: "canonical-digest".to_string(),

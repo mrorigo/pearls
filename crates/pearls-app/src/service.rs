@@ -6,9 +6,9 @@
 //! complete active and archived graph under the publication lock. Status changes
 //! observe preceding mutations; every intermediate relationship graph must be valid.
 //! Opening never discovers or initializes another repository or changes Git hooks.
-//! JSONL remains the task format; transaction schema version 1 is owned by core.
+//! JSONL remains the task format; transaction schema version 2 is owned by core.
 //! Unknown storage schemas fail closed. Receipts do not provide guarantees across
-//! externally reverted Git history. Receipt expiration is not implemented yet.
+//! externally reverted Git history. Expired operation keys remain reserved.
 
 mod adapters;
 mod mutations;
@@ -97,7 +97,8 @@ impl GraphService {
     /// Retrieves the durable receipt for an opaque operation key.
     ///
     /// # Errors
-    /// Returns typed storage or recovery failures. An unknown key returns `None`.
+    /// Returns typed storage or recovery failures, or `OperationExpired` for a
+    /// reserved key whose full receipt expired. An unknown key returns `None`.
     pub fn receipt(&self, operation_key: &str) -> Result<Option<OperationReceipt>> {
         Ok(self.store.receipt(operation_key)?)
     }
@@ -163,4 +164,32 @@ fn operation_request(request: &BatchRequest) -> Result<OperationRequest> {
         request_digest: format!("{:x}", Sha256::digest(canonical_bytes(input)?)),
         expected_revision: request.expected_revision.clone(),
     })
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn api_v1_canonical_digest_matches_the_compatibility_fixture() {
+        let request: BatchRequest = serde_json::from_value(serde_json::json!({
+            "operation_key":"fixture-key",
+            "expected_revision":"fixture-revision",
+            "mutations":[{"kind":"create","local_ref":"fixture","task":{
+                "title":"Fixture café","author":"tester","description":"","priority":null,
+                "labels":["one","two"],"metadata":{"nested":{"b":2,"a":[2,1]}},"external_key":"fixture:1"
+            }}]
+        })).unwrap();
+        assert_eq!(API_VERSION, 1);
+        assert_eq!(
+            operation_request(&request).unwrap().request_digest,
+            "8d9026488b6cc279fc735e9af7e087c5bf5729c68fa95b4a3b51970cafd55ffb"
+        );
+        let mut different_key = request;
+        different_key.operation_key = "different-key".into();
+        assert_eq!(
+            operation_request(&different_key).unwrap().request_digest,
+            "8d9026488b6cc279fc735e9af7e087c5bf5729c68fa95b4a3b51970cafd55ffb"
+        );
+    }
 }

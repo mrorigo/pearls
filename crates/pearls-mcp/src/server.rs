@@ -956,6 +956,7 @@ fn map_app_error(error: AppError) -> ErrorData {
         | pearls_app::ErrorCode::InvalidTransition
         | pearls_app::ErrorCode::ValidationError
         | pearls_app::ErrorCode::RevisionConflict
+        | pearls_app::ErrorCode::OperationExpired
         | pearls_app::ErrorCode::IdempotencyConflict
         | pearls_app::ErrorCode::ExternalKeyConflict
         | pearls_app::ErrorCode::InvalidGraph
